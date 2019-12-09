@@ -1,0 +1,22 @@
+# Use the (faster) container-based infrastructure, see also
+# http://docs.travis-ci.com/user/workers/container-based-infrastructure/
+sudo: true
+dist: bionic
+
+language: go
+go:
+  - "1.13"
+
+script:
+  # Check whether files are syntactically correct.
+  - "gofmt -l $(find . -name '*.go' | tr '\\n' ' ') >/dev/null"
+  # Check whether files were not gofmt'ed.
+  - "gosrc=$(find . -name '*.go' | tr '\\n' ' '); [ $(gofmt -l $gosrc 2>&- | wc -l) -eq 0 ] || (echo 'gofmt was not run on these files:'; gofmt -l $gosrc 2>&-; false)"
+  - go vet .
+  - go test ./...
+  - go test -c github.com/sbezverk/nftableslib
+  - GO111MODULE="on" go build -race -a -o ./ ./cmd/e2e
+  - GO111MODULE="on" go build -race -a -o ./ ./cmd/concurrent
+  # Disable running e2e test in CI, as it constantly fails.
+  # Running locally proved to be successful on multiple platforms
+  # - sudo ./e2e

@@ -1,0 +1,27 @@
+# github.com/google/nftables v0.0.0-20191201091042-4f16059f2d43
+github.com/google/nftables
+github.com/google/nftables/binaryutil
+github.com/google/nftables/expr
+# github.com/google/uuid v1.1.1
+github.com/google/uuid
+# github.com/koneu/natend v0.0.0-20150829182554-ec0926ea948d
+github.com/koneu/natend
+# github.com/mdlayher/netlink v0.0.0-20191009155606-de872b0d824b
+github.com/mdlayher/netlink
+github.com/mdlayher/netlink/nlenc
+github.com/mdlayher/netlink/nltest
+# github.com/sbezverk/nftableslib v0.0.0-20191205172847-49a03aec892d
+github.com/sbezverk/nftableslib
+# github.com/spf13/pflag v1.0.3
+github.com/spf13/pflag
+# golang.org/x/net v0.0.0-20191204025024-5ee1b9f4859a
+golang.org/x/net/bpf
+# golang.org/x/sys v0.0.0-20191204072324-ce4227a45e2e
+golang.org/x/sys/unix
+# k8s.io/apimachinery v0.0.0 => k8s.io/apimachinery v0.0.0-20191028221656-72ed19daf4bb
+k8s.io/apimachinery/pkg/util/runtime
+k8s.io/apimachinery/pkg/util/wait
+# k8s.io/component-base v0.0.0 => k8s.io/component-base v0.0.0-20191114102325-35a9586014f7
+k8s.io/component-base/logs
+# k8s.io/klog v0.4.0
+k8s.io/klog
