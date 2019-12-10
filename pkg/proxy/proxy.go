@@ -8,6 +8,6 @@ type Proxy interface{}
 type proxy struct{}
 
 // NewProxy return a new instance of nfproxy
-func NewProxy(nftableslib.TablesInterface) Proxy {
+func NewProxy(ti nftableslib.TablesInterface) Proxy {
 	return proxy{}
 }

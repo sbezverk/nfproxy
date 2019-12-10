@@ -4,11 +4,14 @@ import (
 	"flag"
 	"math/rand"
 	"os"
+	"os/signal"
+	"syscall"
 	"time"
 
 	"github.com/sbezverk/nfproxy/pkg/controller"
 	"github.com/sbezverk/nfproxy/pkg/nftables"
 	"github.com/sbezverk/nfproxy/pkg/proxy"
+	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/component-base/logs"
 	"k8s.io/klog"
 )
@@ -19,6 +22,20 @@ var (
 
 func init() {
 	flag.StringVar(&kubeconfig, "kubeconfig", "", "Absolute path to the kubeconfig file.")
+}
+
+func setupSignalHandler() (stopCh <-chan struct{}) {
+	stop := make(chan struct{})
+	c := make(chan os.Signal, 2)
+	signal.Notify(c, os.Interrupt, syscall.SIGTERM)
+	go func() {
+		<-c
+		close(stop)
+		<-c
+		os.Exit(1) // second signal. Exit directly.
+	}()
+
+	return stop
 }
 
 func main() {
@@ -45,10 +62,19 @@ func main() {
 	}
 	// Program initializes default nftables proxy's rules
 	//
-
-	controller.NewController(client)
+	controller := controller.NewController(client)
+	if err := controller.Run(wait.NeverStop); err != nil {
+		klog.Errorf("nfproxy failed to start controller with error: %s", err)
+		os.Exit(1)
+	}
 
 	proxy.NewProxy(ti)
+
+	stopCh := setupSignalHandler()
+	select {
+	case <-stopCh:
+		klog.Info("Received stop signal, shuting down controller")
+	}
 
 	os.Exit(0)
 }
