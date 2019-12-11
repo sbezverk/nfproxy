@@ -23,6 +23,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/sbezverk/nfproxy/pkg/nftables"
 	"k8s.io/klog"
 
 	v1 "k8s.io/api/core/v1"
@@ -51,6 +52,7 @@ type BaseEndpointInfo struct {
 	// IsLocal indicates whether the endpoint is running in same host as kube-proxy.
 	IsLocal  bool
 	Topology map[string]string
+	epnft    *nftables.EPnft
 }
 
 var _ Endpoint = &BaseEndpointInfo{}

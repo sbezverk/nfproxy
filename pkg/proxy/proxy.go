@@ -3,7 +3,8 @@ package proxy
 import (
 	"sync"
 
-	"github.com/sbezverk/nftableslib"
+	utilnftables "github.com/google/nftables"
+	"github.com/sbezverk/nfproxy/pkg/nftables"
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/record"
@@ -34,10 +35,16 @@ func (p *proxy) AddService(svc *v1.Service) {
 		servicePort := &svc.Spec.Ports[i]
 		svcPortName := ServicePortName{NamespacedName: svcName, Port: servicePort.Name, Protocol: servicePort.Protocol}
 		baseSvcInfo := newBaseServiceInfo(servicePort, svc)
-		klog.Infof("AddService service port name: %s   new service Info: %+v", svcPortName, newServiceInfo(servicePort, svc, baseSvcInfo))
+		//		klog.Infof("AddService service port name: %s   new service Info: %+v", svcPortName, newServiceInfo(servicePort, svc, baseSvcInfo))
 		p.mu.Lock()
 		p.serviceMap[svcPortName] = newServiceInfo(servicePort, svc, baseSvcInfo)
+		ep, ok := p.endpointsMap[svcPortName]
 		p.mu.Unlock()
+		if !ok {
+			klog.Infof("service: %s does not have corresponding endpoints %s.", svcPortName)
+		} else {
+			klog.Infof("service: %s has corresponding endpoints %+v.", svcPortName, ep)
+		}
 	}
 }
 
@@ -69,14 +76,44 @@ func (p *proxy) AddEndpoints(ep *v1.Endpoints) {
 				}
 				isLocal := addr.NodeName != nil && *addr.NodeName == p.hostname
 				var ipFamily v1.IPFamily
+				var ipTableFamily utilnftables.TableFamily
 				if utilnet.IsIPv6String(addr.IP) {
 					ipFamily = v1.IPv6Protocol
+					ipTableFamily = utilnftables.TableFamilyIPv6
 				} else {
 					ipFamily = v1.IPv4Protocol
+					ipTableFamily = utilnftables.TableFamilyIPv4
 				}
 				baseEndpointInfo := newBaseEndpointInfo(ipFamily, port.Protocol, addr.IP, int(port.Port), isLocal, nil)
-				klog.Infof("AddEndpoint: service port name: %s  new endpoint Info: %+v", svcPortName, newEndpointInfo(baseEndpointInfo, port.Protocol))
+				// Adding to endpoint base information, structures to carry nftables related info
+				baseEndpointInfo.epnft = &nftables.EPnft{
+					Interface: p.nfti,
+					Rule:      make(map[utilnftables.TableFamily]nftables.EPRule),
+				}
+				cn := servicePortEndpointChainName(svcPortName.String(), string(port.Protocol), baseEndpointInfo.Endpoint)
+				ruleID, err := nftables.ProgramNewEndpoint(p.nfti, ipTableFamily, cn, addr.IP, port.Protocol, port.Port)
+				if err != nil {
+					// If programming of rule failed, then do not add endpoint into the map
+					// early return and hope to add it during next controller's resync
+					klog.Errorf("nfproxy failed to program new endpoint for %s", svcPortName)
+					return
+				}
+				// Initializing ip table family depending on endpoint's family ipv4 or ipv6
+				baseEndpointInfo.epnft.Rule[ipTableFamily] = nftables.EPRule{
+					Chain:  cn,
+					RuleID: ruleID,
+				}
+				// klog.Infof("AddEndpoint: service port name: %s  new endpoint Info: %+v", svcPortName, newEndpointInfo(baseEndpointInfo, port.Protocol))
+
+				p.mu.Lock()
 				p.endpointsMap[svcPortName] = append(p.endpointsMap[svcPortName], newEndpointInfo(baseEndpointInfo, port.Protocol))
+				svc, ok := p.serviceMap[svcPortName]
+				p.mu.Unlock()
+				if !ok {
+					klog.Infof("endpoint: %s does not have corresponding service.", svcPortName)
+				} else {
+					klog.Infof("endpoint: %s has corresponding service %s.", svcPortName, svc.String())
+				}
 			}
 			klog.V(3).Infof("Setting endpoints for %q to %+v", svcPortName, formatEndpointsList(p.endpointsMap[svcPortName]))
 		}
@@ -92,6 +129,7 @@ func (p *proxy) UpdateEndpoints(epOld, epNew *v1.Endpoints) {
 
 type proxy struct {
 	hostname     string
+	nfti         *nftables.NFTInterface
 	mu           sync.Mutex // protects the following fields
 	serviceMap   ServiceMap
 	endpointsMap EndpointsMap
@@ -99,9 +137,10 @@ type proxy struct {
 }
 
 // NewProxy return a new instance of nfproxy
-func NewProxy(ti nftableslib.TablesInterface, hostname string, recorder record.EventRecorder) Proxy {
+func NewProxy(nfti *nftables.NFTInterface, hostname string, recorder record.EventRecorder) Proxy {
 	return &proxy{
 		hostname:     hostname,
+		nfti:         nfti,
 		portsMap:     make(map[utilproxy.LocalPort]utilproxy.Closeable),
 		serviceMap:   make(ServiceMap),
 		endpointsMap: make(EndpointsMap),
