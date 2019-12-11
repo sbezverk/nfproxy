@@ -59,7 +59,7 @@ func main() {
 	}
 
 	// Attempt to Init nftables, if fails exit with error
-	ti, err := nftables.InitNFTables()
+	nfti, err := nftables.InitNFTables()
 	if err != nil {
 		klog.Errorf("nfproxy failed to initialize nftables with error: %+v", err)
 		os.Exit(1)
@@ -74,7 +74,7 @@ func main() {
 	eventBroadcaster := record.NewBroadcaster()
 	recorder := eventBroadcaster.NewRecorder(scheme.Scheme, v1.EventSource{Component: "nfproxy", Host: hostname})
 
-	nfproxy := proxy.NewProxy(ti, hostname, recorder)
+	nfproxy := proxy.NewProxy(nfti, hostname, recorder)
 	// Program initializes default nftables proxy's rules
 	//
 	controller := controller.NewController(client, nfproxy)
