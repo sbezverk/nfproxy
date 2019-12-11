@@ -11,9 +11,13 @@ import (
 	"github.com/sbezverk/nfproxy/pkg/controller"
 	"github.com/sbezverk/nfproxy/pkg/nftables"
 	"github.com/sbezverk/nfproxy/pkg/proxy"
+	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/util/wait"
+	"k8s.io/client-go/kubernetes/scheme"
+	"k8s.io/client-go/tools/record"
 	"k8s.io/component-base/logs"
 	"k8s.io/klog"
+	utilnode "k8s.io/kubernetes/pkg/util/node"
 )
 
 var (
@@ -60,15 +64,24 @@ func main() {
 		klog.Errorf("nfproxy failed to initialize nftables with error: %+v", err)
 		os.Exit(1)
 	}
+
+	// Create event recorder
+	hostname, err := utilnode.GetHostname("")
+	if err != nil {
+		klog.Errorf("nfproxy failed to get local host name with error: %+v", err)
+		os.Exit(1)
+	}
+	eventBroadcaster := record.NewBroadcaster()
+	recorder := eventBroadcaster.NewRecorder(scheme.Scheme, v1.EventSource{Component: "nfproxy", Host: hostname})
+
+	nfproxy := proxy.NewProxy(ti, hostname, recorder)
 	// Program initializes default nftables proxy's rules
 	//
-	controller := controller.NewController(client)
+	controller := controller.NewController(client, nfproxy)
 	if err := controller.Run(wait.NeverStop); err != nil {
 		klog.Errorf("nfproxy failed to start controller with error: %s", err)
 		os.Exit(1)
 	}
-
-	proxy.NewProxy(ti)
 
 	stopCh := setupSignalHandler()
 	select {

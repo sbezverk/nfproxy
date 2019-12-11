@@ -12,6 +12,8 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/klog"
+
+	"github.com/sbezverk/nfproxy/pkg/proxy"
 )
 
 // Controller exposes methods for Services and Endpoints controllers
@@ -25,19 +27,19 @@ type controller struct {
 	servicesSynced  cache.InformerSynced
 	endpoints       informer.EndpointsInformer
 	endpointsSynced cache.InformerSynced
+	proxy           proxy.Proxy
 }
 
 func (c *controller) handleAddService(obj interface{}) {
-	klog.Info("handleAddService")
-	_, ok := obj.(*v1.Service)
+	svc, ok := obj.(*v1.Service)
 	if !ok {
 		utilruntime.HandleError(fmt.Errorf("unexpected object type: %v", obj))
 		return
 	}
+	c.proxy.AddService(svc)
 }
 
 func (c *controller) handleUpdateService(oldObj, newObj interface{}) {
-	klog.Info("handleUpdateService")
 	svcOld, ok := oldObj.(*v1.Service)
 	if !ok {
 		utilruntime.HandleError(fmt.Errorf("unexpected object type: %v", oldObj))
@@ -50,12 +52,13 @@ func (c *controller) handleUpdateService(oldObj, newObj interface{}) {
 	}
 	if svcOld.ObjectMeta.ResourceVersion == svcNew.ObjectMeta.ResourceVersion {
 		klog.Infof("Resync update for service: %s/%s", svcNew.ObjectMeta.Namespace, svcNew.ObjectMeta.Name)
+		return
 	}
+	c.proxy.UpdateService(svcOld, svcNew)
 }
 
 func (c *controller) handleDeleteService(obj interface{}) {
-	klog.Info("handleDeleteService")
-	_, ok := obj.(*v1.Service)
+	svc, ok := obj.(*v1.Service)
 	if !ok {
 		tombstone, ok := obj.(cache.DeletedFinalStateUnknown)
 		if !ok {
@@ -67,19 +70,19 @@ func (c *controller) handleDeleteService(obj interface{}) {
 			return
 		}
 	}
+	c.proxy.DeleteService(svc)
 }
 
 func (c *controller) handleAddEndpoint(obj interface{}) {
-	klog.Info("handleAddEndpoint")
-	_, ok := obj.(*v1.Endpoints)
+	ep, ok := obj.(*v1.Endpoints)
 	if !ok {
 		utilruntime.HandleError(fmt.Errorf("unexpected object type: %v", obj))
 		return
 	}
+	c.proxy.AddEndpoints(ep)
 }
 
 func (c *controller) handleUpdateEndpoint(oldObj, newObj interface{}) {
-	klog.Info("handleUpdateEndpoint")
 	epOld, ok := oldObj.(*v1.Endpoints)
 	if !ok {
 		utilruntime.HandleError(fmt.Errorf("unexpected object type: %v", oldObj))
@@ -92,12 +95,13 @@ func (c *controller) handleUpdateEndpoint(oldObj, newObj interface{}) {
 	}
 	if epOld.ObjectMeta.ResourceVersion == epNew.ObjectMeta.ResourceVersion {
 		klog.Infof("Resync update for service: %s/%s", epNew.ObjectMeta.Namespace, epNew.ObjectMeta.Name)
+		return
 	}
+	c.proxy.UpdateEndpoints(epOld, epNew)
 }
 
 func (c *controller) handleDeleteEndpoint(obj interface{}) {
-	klog.Info("handleDeleteEndpoint")
-	_, ok := obj.(*v1.Endpoints)
+	ep, ok := obj.(*v1.Endpoints)
 	if !ok {
 		tombstone, ok := obj.(cache.DeletedFinalStateUnknown)
 		if !ok {
@@ -109,10 +113,10 @@ func (c *controller) handleDeleteEndpoint(obj interface{}) {
 			return
 		}
 	}
+	c.proxy.DeleteEndpoints(ep)
 }
 
 func (c *controller) Run(stopCh <-chan struct{}) error {
-	klog.Info("Attempting to run controller...")
 	defer utilruntime.HandleCrash()
 
 	if ok := cache.WaitForCacheSync(stopCh, c.servicesSynced); !ok {
@@ -128,9 +132,11 @@ func (c *controller) Run(stopCh <-chan struct{}) error {
 }
 
 // NewController return a new instance of Services and Endpoints controller
-func NewController(clientset *kubernetes.Clientset) Controller {
+func NewController(clientset *kubernetes.Clientset, proxy proxy.Proxy) Controller {
 	klog.Info("Setting up new Services and Endpoints controller...")
-	controller := controller{}
+	controller := controller{
+		proxy: proxy,
+	}
 	informerFactory := informers.NewSharedInformerFactoryWithOptions(clientset, time.Minute*5)
 	// Setting up Services informer
 	controller.services = informerFactory.Core().V1().Services()

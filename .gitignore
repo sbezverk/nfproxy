@@ -6,6 +6,9 @@
 *.dylib
 bin/*
 
+# k8s staging files
+staging/*
+
 # Test binary, build with `go test -c`
 *.test
 
