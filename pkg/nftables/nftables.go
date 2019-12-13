@@ -24,7 +24,7 @@ type NFTInterface struct {
 type EPRule struct {
 	Chain  string
 	Rule   nftableslib.Rule
-	RuleID uint64
+	RuleID []uint64
 }
 
 // EPnft defines per endpoint nftables info. This information allows manipulating
@@ -93,10 +93,10 @@ func getNFTInterface(ti nftableslib.TablesInterface) (*NFTInterface, error) {
 	}, nil
 }
 
-// AddEndpointRule defines function which creates new nftables chain, rule and
+// AddEndpointRules defines function which creates new nftables chain, rule and
 // if successful return rule ID.
 func AddEndpointRules(nfti *NFTInterface, tableFamily nftables.TableFamily, chain string,
-	ipaddr string, proto v1.Protocol, port int32) (uint64, error) {
+	ipaddr string, proto v1.Protocol, port int32) ([]uint64, error) {
 	var ruleProto byte
 	var ci nftableslib.ChainsInterface
 	switch proto {
@@ -143,18 +143,18 @@ func AddEndpointRules(nfti *NFTInterface, tableFamily nftables.TableFamily, chai
 		},
 	}
 	if err := ci.Chains().CreateImm(chain, nil); err != nil {
-		return 0, err
+		return nil, err
 	}
 	id, err := programChainRules(ci, chain, rules)
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
 
 	return id, nil
 }
 
 // DeleteEndpointRules delete nftables rules associated with an endpoint and then deletes endpoint's chain
-func DeleteEndpointRules(nfti *NFTInterface, tableFamily nftables.TableFamily, chain string, ruleID uint64) error {
+func DeleteEndpointRules(nfti *NFTInterface, tableFamily nftables.TableFamily, chain string, ruleID []uint64) error {
 	var ci nftableslib.ChainsInterface
 	switch tableFamily {
 	case nftables.TableFamilyIPv4:
@@ -162,32 +162,46 @@ func DeleteEndpointRules(nfti *NFTInterface, tableFamily nftables.TableFamily, c
 	case nftables.TableFamilyIPv6:
 		ci = nfti.CIv6
 	}
-	ri, err := ci.Chains().Chain(chain)
-	if err != nil {
+
+	if err := deleteChainRules(ci, chain, ruleID); err != nil {
 		return err
 	}
-	// TODO Add DeleteImm to nftableslib
-	if err := ri.Rules().Delete(uint32(ruleID)); err != nil {
+
+	if err := ci.Chains().DeleteImm(chain); err != nil {
 		return err
 	}
-	// TODO Add DeleteChainImm to nftableslib
 
 	return nil
 }
 
-func programChainRules(ci nftableslib.ChainsInterface, chain string, rules []nftableslib.Rule) (uint64, error) {
-	var id uint64
+func programChainRules(ci nftableslib.ChainsInterface, chain string, rules []nftableslib.Rule) ([]uint64, error) {
+	var ids []uint64
 	var err error
 	ri, err := ci.Chains().Chain(chain)
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
 	for _, r := range rules {
-		id, err = ri.Rules().CreateImm(&r)
+		id, err := ri.Rules().CreateImm(&r)
 		if err != nil {
-			return 0, err
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+
+	return ids, nil
+}
+
+func deleteChainRules(ci nftableslib.ChainsInterface, chain string, rules []uint64) error {
+	ri, err := ci.Chains().Chain(chain)
+	if err != nil {
+		return err
+	}
+	for _, r := range rules {
+		if err := ri.Rules().DeleteImm(r); err != nil {
+			return err
 		}
 	}
 
-	return id, nil
+	return nil
 }

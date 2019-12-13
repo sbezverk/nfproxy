@@ -107,7 +107,7 @@ func (p *proxy) AddEndpoints(ep *v1.Endpoints) {
 					Chain: cn,
 					// RuleID 0 is indicator that the nftables rule has not been yet programmed, once it is programed
 					// RuleID will be updated to real value.
-					RuleID: 0,
+					RuleID: nil,
 				}
 				baseEndpointInfo.epnft.Rule[ipTableFamily] = epRule
 				p.mu.Lock()
@@ -131,10 +131,10 @@ func (p *proxy) addEndpointRule(epRule *nftables.EPRule, ipTableFamily utilnftab
 	stopCh := p.epProgMap[epKey{proto, ipaddr, port}]
 	p.epProgMapLock.Unlock()
 	retrier := time.NewTicker(nfRuleRetryInterval)
-	var ruleID uint64
+	var ruleIDs []uint64
 	var err error
 	for {
-		ruleID, err = nftables.AddEndpointRules(p.nfti, ipTableFamily, cn, ipaddr, proto, port)
+		ruleIDs, err = nftables.AddEndpointRules(p.nfti, ipTableFamily, cn, ipaddr, proto, port)
 		if err == nil {
 			break
 		}
@@ -147,7 +147,7 @@ func (p *proxy) addEndpointRule(epRule *nftables.EPRule, ipTableFamily utilnftab
 	}
 	// Programming nftables rule has succeeded, updating RuleID and removing entry from epProgMap
 	p.mu.Lock()
-	epRule.RuleID = ruleID
+	epRule.RuleID = ruleIDs
 	p.mu.Unlock()
 	p.epProgMapLock.Lock()
 	delete(p.epProgMap, epKey{proto, ipaddr, port})
@@ -155,7 +155,7 @@ func (p *proxy) addEndpointRule(epRule *nftables.EPRule, ipTableFamily utilnftab
 	klog.Infof("nfproxy: addEndpointRule suceeded for %+v", epKey{proto, ipaddr, port})
 }
 
-func (p *proxy) deleteEndpointRules(ipTableFamily utilnftables.TableFamily, cn string, ruleID uint64, ipaddr string, proto v1.Protocol, port int32) {
+func (p *proxy) deleteEndpointRules(ipTableFamily utilnftables.TableFamily, cn string, ruleID []uint64, ipaddr string, proto v1.Protocol, port int32) {
 	p.epProgMapLock.Lock()
 	stopCh := p.epProgMap[epKey{proto, ipaddr, port}]
 	p.epProgMapLock.Unlock()
