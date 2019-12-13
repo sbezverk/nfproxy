@@ -42,13 +42,7 @@ func (p *proxy) AddService(svc *v1.Service) {
 		baseSvcInfo := newBaseServiceInfo(servicePort, svc)
 		p.mu.Lock()
 		p.serviceMap[svcPortName] = newServiceInfo(servicePort, svc, baseSvcInfo)
-		ep, ok := p.endpointsMap[svcPortName]
 		p.mu.Unlock()
-		if !ok {
-			klog.Infof("service: %s does not have corresponding endpoints.", svcPortName)
-		} else {
-			klog.Infof("service: %s has corresponding endpoints %+v.", svcPortName, ep)
-		}
 	}
 }
 
@@ -124,7 +118,7 @@ func (p *proxy) AddEndpoints(ep *v1.Endpoints) {
 				p.epProgMapLock.Lock()
 				p.epProgMap[epKey{port.Protocol, addr.IP, port.Port}] = make(chan struct{})
 				p.epProgMapLock.Unlock()
-				go p.programEndpoint(&epRule, ipTableFamily, cn, addr.IP, port.Protocol, port.Port)
+				go p.addEndpointRule(&epRule, ipTableFamily, cn, addr.IP, port.Protocol, port.Port)
 
 			}
 			klog.V(3).Infof("Setting endpoints for %q to %+v", svcPortName, formatEndpointsList(p.endpointsMap[svcPortName]))
@@ -132,13 +126,15 @@ func (p *proxy) AddEndpoints(ep *v1.Endpoints) {
 	}
 }
 
-func (p *proxy) programEndpoint(epRule *nftables.EPRule, ipTableFamily utilnftables.TableFamily, cn string, ipaddr string, proto v1.Protocol, port int32) {
+func (p *proxy) addEndpointRule(epRule *nftables.EPRule, ipTableFamily utilnftables.TableFamily, cn string, ipaddr string, proto v1.Protocol, port int32) {
+	p.epProgMapLock.Lock()
 	stopCh := p.epProgMap[epKey{proto, ipaddr, port}]
+	p.epProgMapLock.Unlock()
 	retrier := time.NewTicker(nfRuleRetryInterval)
 	var ruleID uint64
 	var err error
 	for {
-		ruleID, err = nftables.ProgramNewEndpoint(p.nfti, ipTableFamily, cn, ipaddr, proto, port)
+		ruleID, err = nftables.AddEndpointRules(p.nfti, ipTableFamily, cn, ipaddr, proto, port)
 		if err == nil {
 			break
 		}
@@ -156,10 +152,111 @@ func (p *proxy) programEndpoint(epRule *nftables.EPRule, ipTableFamily utilnftab
 	p.epProgMapLock.Lock()
 	delete(p.epProgMap, epKey{proto, ipaddr, port})
 	p.epProgMapLock.Unlock()
+	klog.Infof("nfproxy: addEndpointRule suceeded for %+v", epKey{proto, ipaddr, port})
+}
+
+func (p *proxy) deleteEndpointRules(ipTableFamily utilnftables.TableFamily, cn string, ruleID uint64, ipaddr string, proto v1.Protocol, port int32) {
+	p.epProgMapLock.Lock()
+	stopCh := p.epProgMap[epKey{proto, ipaddr, port}]
+	p.epProgMapLock.Unlock()
+	retrier := time.NewTicker(nfRuleRetryInterval)
+
+	for {
+
+		if err := nftables.DeleteEndpointRules(p.nfti, ipTableFamily, cn, ruleID); err == nil {
+			break
+		}
+		select {
+		case <-stopCh:
+			retrier.Stop()
+			return
+		case <-retrier.C:
+		}
+	}
+	// Programming nftables rule has succeeded, updating RuleID and removing entry from epProgMap
+	p.epProgMapLock.Lock()
+	delete(p.epProgMap, epKey{proto, ipaddr, port})
+	p.epProgMapLock.Unlock()
+	klog.Infof("nfproxy: deleteEndpointRules suceeded for %+v", epKey{proto, ipaddr, port})
 }
 
 func (p *proxy) DeleteEndpoints(ep *v1.Endpoints) {
+	for i := range ep.Subsets {
+		ss := &ep.Subsets[i]
+		for i := range ss.Ports {
+			port := &ss.Ports[i]
+			if port.Port == 0 {
+				klog.Warningf("ignoring invalid endpoint port %s", port.Name)
+				continue
+			}
+			svcPortName := ServicePortName{
+				NamespacedName: types.NamespacedName{Namespace: ep.Namespace, Name: ep.Name},
+				Port:           port.Name,
+				Protocol:       port.Protocol,
+			}
+			eps, ok := p.endpointsMap[svcPortName]
+			if !ok {
+				// endpointsMap does not carry information for svcPortName, it means the event of adding endpoint was missed
+				// log warning message and move on as nothing else left to do.
+				klog.Warningf("nfproxy: Attempting to delete unknown to nfproxy service port name: %s", svcPortName.String())
+				continue
+			}
+			for i := range ss.Addresses {
+				addr := &ss.Addresses[i]
+				if addr.IP == "" {
+					klog.Warningf("ignoring invalid endpoint port %s with empty host", port.Name)
+					continue
+				}
+				// Check if combination of Protocol, ip addres and port already exists in endpoint ongoing programming map
+				// if exists, it indicates that endpoint still has not succeeded to have nftables rule to be programmed. In this case
+				// go routing should be stopped and epProgMap cleaned up from port.Protocol, addr.IP, port.Port key
+				if epStopCh, ok := p.epProgMap[epKey{port.Protocol, addr.IP, port.Port}]; ok {
+					// Shutting down EP programmer go routine for port.Protocol, addr.IP, port.Port
+					epStopCh <- struct{}{}
+					// Deleting entry from epProgMap
+					p.epProgMapLock.Lock()
+					delete(p.epProgMap, epKey{port.Protocol, addr.IP, port.Port})
+					p.epProgMapLock.Unlock()
+					continue
+				}
+				isLocal := addr.NodeName != nil && *addr.NodeName == p.hostname
+				var ipFamily v1.IPFamily
+				var ipTableFamily utilnftables.TableFamily
+				if utilnet.IsIPv6String(addr.IP) {
+					ipFamily = v1.IPv6Protocol
+					ipTableFamily = utilnftables.TableFamilyIPv6
+				} else {
+					ipFamily = v1.IPv4Protocol
+					ipTableFamily = utilnftables.TableFamilyIPv4
+				}
+				ep2d := newBaseEndpointInfo(ipFamily, port.Protocol, addr.IP, int(port.Port), isLocal, nil)
+				klog.Infof("To delete endpoint: %s", ep2d.Endpoint)
+				for i, ep := range eps {
+					ep2c := ep.(*BaseEndpointInfo)
+					klog.Infof("Existing endpoint: %s", ep2c.Endpoint)
+					if ep2c.Equal(ep2d) {
+						klog.Infof("Found match to delete: %s existing: %s", ep2d.Endpoint, ep2c.Endpoint)
 
+						cn := ep2c.epnft.Rule[ipTableFamily].Chain
+						ruleID := ep2c.epnft.Rule[ipTableFamily].RuleID
+
+						p.mu.Lock()
+						// Update eps by removing endpoint entry for port.Protocol, addr.IP, port.Port
+						p.endpointsMap[svcPortName] = eps[:i]
+						p.endpointsMap[svcPortName] = append(p.endpointsMap[svcPortName], eps[:i+1]...)
+						p.mu.Unlock()
+						// Starting go routine which will attempt to delete nftables rules, on success it will
+						// remove entry from epProgMap for key port.Protocol, addr.IP, port.Port and exit
+						p.epProgMapLock.Lock()
+						p.epProgMap[epKey{port.Protocol, addr.IP, port.Port}] = make(chan struct{})
+						p.epProgMapLock.Unlock()
+						go p.deleteEndpointRules(ipTableFamily, cn, ruleID, addr.IP, port.Protocol, port.Port)
+					}
+				}
+			}
+			klog.V(3).Infof("Setting endpoints for %q to %+v", svcPortName, formatEndpointsList(p.endpointsMap[svcPortName]))
+		}
+	}
 }
 func (p *proxy) UpdateEndpoints(epOld, epNew *v1.Endpoints) {
 
