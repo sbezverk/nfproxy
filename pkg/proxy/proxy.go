@@ -54,6 +54,7 @@ func (p *proxy) UpdateService(svcOld, svcNew *v1.Service) {
 }
 
 func (p *proxy) AddEndpoints(ep *v1.Endpoints) {
+	klog.Infof("Add endpoint: %s/%s subset: %+v", ep.Namespace, ep.Name, ep.Subsets)
 	for i := range ep.Subsets {
 		ss := &ep.Subsets[i]
 		for i := range ss.Ports {
@@ -75,7 +76,10 @@ func (p *proxy) AddEndpoints(ep *v1.Endpoints) {
 				}
 				// Check if combination of Protocol, ip addres and port already exists in endpoint ongoing programming map
 				// it should not happen during Add operation and indicate a software issue, warning is logged to alert.
-				if epStopCh, ok := p.epProgMap[epKey{port.Protocol, addr.IP, port.Port}]; ok {
+				p.epProgMapLock.Lock()
+				epStopCh, ok := p.epProgMap[epKey{port.Protocol, addr.IP, port.Port}]
+				p.epProgMapLock.Unlock()
+				if ok {
 					klog.Warningf("nfproxy: Attempting to add already known endpoint for protocol: %s ip address: %s port: %d", port.Protocol, addr.IP, port.Port)
 					// Shutting down EP programmer go routine for port.Protocol, addr.IP, port.Port
 					epStopCh <- struct{}{}
@@ -121,12 +125,15 @@ func (p *proxy) AddEndpoints(ep *v1.Endpoints) {
 				go p.addEndpointRule(&epRule, ipTableFamily, cn, addr.IP, port.Protocol, port.Port)
 
 			}
+			p.mu.Lock()
 			klog.V(3).Infof("Setting endpoints for %q to %+v", svcPortName, formatEndpointsList(p.endpointsMap[svcPortName]))
+			p.mu.Unlock()
 		}
 	}
 }
 
 func (p *proxy) addEndpointRule(epRule *nftables.EPRule, ipTableFamily utilnftables.TableFamily, cn string, ipaddr string, proto v1.Protocol, port int32) {
+	klog.Infof("nfproxy: addEndpointRule attempt to program rules for %+v", epKey{proto, ipaddr, port})
 	p.epProgMapLock.Lock()
 	stopCh := p.epProgMap[epKey{proto, ipaddr, port}]
 	p.epProgMapLock.Unlock()
@@ -181,6 +188,7 @@ func (p *proxy) deleteEndpointRules(ipTableFamily utilnftables.TableFamily, cn s
 }
 
 func (p *proxy) DeleteEndpoints(ep *v1.Endpoints) {
+	klog.Infof("Delete endpoint: %s/%s subset: %+v", ep.Namespace, ep.Name, ep.Subsets)
 	for i := range ep.Subsets {
 		ss := &ep.Subsets[i]
 		for i := range ss.Ports {
@@ -194,13 +202,16 @@ func (p *proxy) DeleteEndpoints(ep *v1.Endpoints) {
 				Port:           port.Name,
 				Protocol:       port.Protocol,
 			}
+			p.mu.Lock()
 			eps, ok := p.endpointsMap[svcPortName]
+			p.mu.Unlock()
 			if !ok {
 				// endpointsMap does not carry information for svcPortName, it means the event of adding endpoint was missed
 				// log warning message and move on as nothing else left to do.
 				klog.Warningf("nfproxy: Attempting to delete unknown to nfproxy service port name: %s", svcPortName.String())
 				continue
 			}
+			klog.Infof("Exisiting endpoints: %+v Number of exisiting endpoint: %d", eps, len(eps))
 			for i := range ss.Addresses {
 				addr := &ss.Addresses[i]
 				if addr.IP == "" {
@@ -232,18 +243,22 @@ func (p *proxy) DeleteEndpoints(ep *v1.Endpoints) {
 				ep2d := newBaseEndpointInfo(ipFamily, port.Protocol, addr.IP, int(port.Port), isLocal, nil)
 				klog.Infof("To delete endpoint: %s", ep2d.Endpoint)
 				for i, ep := range eps {
-					ep2c := ep.(*BaseEndpointInfo)
-					klog.Infof("Existing endpoint: %s", ep2c.Endpoint)
+					ep2c, ok := ep.(*endpointsInfo)
+					if !ok {
+						// Not recognize, skipping it
+						continue
+					}
+					klog.Infof("Existing endpoint: %s", ep2c.BaseEndpointInfo.Endpoint)
 					if ep2c.Equal(ep2d) {
-						klog.Infof("Found match to delete: %s existing: %s", ep2d.Endpoint, ep2c.Endpoint)
+						klog.Infof("Found match to delete: %s existing: %s", ep2d.Endpoint, ep2c.BaseEndpointInfo.Endpoint)
 
-						cn := ep2c.epnft.Rule[ipTableFamily].Chain
-						ruleID := ep2c.epnft.Rule[ipTableFamily].RuleID
+						cn := ep2c.BaseEndpointInfo.epnft.Rule[ipTableFamily].Chain
+						ruleID := ep2c.BaseEndpointInfo.epnft.Rule[ipTableFamily].RuleID
 
-						p.mu.Lock()
 						// Update eps by removing endpoint entry for port.Protocol, addr.IP, port.Port
+						p.mu.Lock()
 						p.endpointsMap[svcPortName] = eps[:i]
-						p.endpointsMap[svcPortName] = append(p.endpointsMap[svcPortName], eps[:i+1]...)
+						p.endpointsMap[svcPortName] = append(p.endpointsMap[svcPortName], eps[i+1:]...)
 						p.mu.Unlock()
 						// Starting go routine which will attempt to delete nftables rules, on success it will
 						// remove entry from epProgMap for key port.Protocol, addr.IP, port.Port and exit
@@ -254,12 +269,41 @@ func (p *proxy) DeleteEndpoints(ep *v1.Endpoints) {
 					}
 				}
 			}
-			klog.V(3).Infof("Setting endpoints for %q to %+v", svcPortName, formatEndpointsList(p.endpointsMap[svcPortName]))
+			klog.V(3).Infof("Deleting endpoints for %q to %+v", svcPortName, formatEndpointsList(p.endpointsMap[svcPortName]))
+			if len(p.endpointsMap[svcPortName]) == 0 {
+				klog.Infof("number of endpoints for key: %+v is 0, removing entry from p.endpointsMap", svcPortName)
+				p.mu.Lock()
+				delete(p.endpointsMap, svcPortName)
+				p.mu.Unlock()
+			}
 		}
 	}
 }
-func (p *proxy) UpdateEndpoints(epOld, epNew *v1.Endpoints) {
 
+func (p *proxy) UpdateEndpoints(epOld, epNew *v1.Endpoints) {
+	klog.Infof("Updte endpoint: %s/%s subset: %+v", epNew.Namespace, epNew.Name, epNew.Subsets)
+	for i := range epNew.Subsets {
+		ss := &epNew.Subsets[i]
+		for i := range ss.Ports {
+			port := &ss.Ports[i]
+			if port.Port == 0 {
+				klog.Warningf("ignoring invalid endpoint port %s", port.Name)
+				continue
+			}
+			svcPortName := ServicePortName{
+				NamespacedName: types.NamespacedName{Namespace: epNew.Namespace, Name: epOld.Name},
+				Port:           port.Name,
+				Protocol:       port.Protocol,
+			}
+			_, ok := p.endpointsMap[svcPortName]
+			if !ok {
+				// endpointsMap does not carry information for svcPortName, treat it as new
+				klog.Infof("nfproxy: Attempting to update unknown to nfproxy service port name: %s", svcPortName.String())
+				go p.AddEndpoints(epNew)
+				return
+			}
+		}
+	}
 }
 
 type proxy struct {
