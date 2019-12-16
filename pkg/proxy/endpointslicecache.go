@@ -161,40 +161,6 @@ func (cache *EndpointSliceCache) updatePending(endpointSlice *discovery.Endpoint
 	return changed
 }
 
-// checkoutChanges returns a list of all endpointsChanges that are
-// pending and then marks them as applied.
-func (cache *EndpointSliceCache) checkoutChanges() []*endpointsChange {
-	changes := []*endpointsChange{}
-
-	cache.lock.Lock()
-	defer cache.lock.Unlock()
-
-	for serviceNN, esTracker := range cache.trackerByServiceMap {
-		if len(esTracker.pending) == 0 {
-			continue
-		}
-
-		change := &endpointsChange{}
-
-		change.previous = cache.getEndpointsMap(serviceNN, esTracker.applied)
-
-		for name, sliceInfo := range esTracker.pending {
-			if sliceInfo.Remove {
-				delete(esTracker.applied, name)
-			} else {
-				esTracker.applied[name] = sliceInfo
-			}
-
-			delete(esTracker.pending, name)
-		}
-
-		change.current = cache.getEndpointsMap(serviceNN, esTracker.applied)
-		changes = append(changes, change)
-	}
-
-	return changes
-}
-
 // getEndpointsMap computes an EndpointsMap for a given set of EndpointSlices.
 func (cache *EndpointSliceCache) getEndpointsMap(serviceNN types.NamespacedName, sliceInfoByName endpointSliceInfoByName) EndpointsMap {
 	endpointInfoBySP := cache.endpointInfoByServicePort(serviceNN, sliceInfoByName)

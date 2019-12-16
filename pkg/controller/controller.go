@@ -51,7 +51,6 @@ func (c *controller) handleUpdateService(oldObj, newObj interface{}) {
 		return
 	}
 	if svcOld.ObjectMeta.ResourceVersion == svcNew.ObjectMeta.ResourceVersion {
-		klog.Infof("Resync update for service: %s/%s", svcNew.ObjectMeta.Namespace, svcNew.ObjectMeta.Name)
 		return
 	}
 	c.proxy.UpdateService(svcOld, svcNew)
@@ -79,10 +78,10 @@ func (c *controller) handleAddEndpoint(obj interface{}) {
 		utilruntime.HandleError(fmt.Errorf("unexpected object type: %v", obj))
 		return
 	}
-	if ep.Namespace == "default" && ep.Name == "portal" {
-		klog.Infof("Adding endpoint: %s/%s subsets: %+v", ep.Namespace, ep.Name, ep.Subsets)
-		c.proxy.AddEndpoints(ep)
-	}
+	//	if ep.Namespace == "default" && ep.Name == "portal" {
+	//		klog.Infof("Adding endpoint: %s/%s subsets: %+v", ep.Namespace, ep.Name, ep.Subsets)
+	c.proxy.AddEndpoints(ep)
+	//	}
 }
 
 func (c *controller) handleUpdateEndpoint(oldObj, newObj interface{}) {
@@ -99,10 +98,10 @@ func (c *controller) handleUpdateEndpoint(oldObj, newObj interface{}) {
 	if epOld.ObjectMeta.ResourceVersion == epNew.ObjectMeta.ResourceVersion {
 		return
 	}
-	if epNew.Namespace == "default" && epNew.Name == "portal" {
-		klog.Infof("Calling c.proxy.UpdateEndpoints for %s/%s subsets: %+v", epNew.Namespace, epNew.Name, epNew.Subsets)
-		c.proxy.UpdateEndpoints(epOld, epNew)
-	}
+	//	if epNew.Namespace == "default" && epNew.Name == "portal" {
+	//		klog.Infof("Calling c.proxy.UpdateEndpoints for %s/%s subsets: %+v", epNew.Namespace, epNew.Name, epNew.Subsets)
+	c.proxy.UpdateEndpoints(epOld, epNew)
+	//	}
 }
 
 func (c *controller) handleDeleteEndpoint(obj interface{}) {
@@ -118,10 +117,10 @@ func (c *controller) handleDeleteEndpoint(obj interface{}) {
 			return
 		}
 	}
-	if ep.Namespace == "default" && ep.Name == "portal" {
-		klog.Infof("Delete endpoint: %s/%s subsets: %+v", ep.Namespace, ep.Name, ep.Subsets)
-		c.proxy.DeleteEndpoints(ep)
-	}
+	//	if ep.Namespace == "default" && ep.Name == "portal" {
+	//		klog.Infof("Delete endpoint: %s/%s subsets: %+v", ep.Namespace, ep.Name, ep.Subsets)
+	c.proxy.DeleteEndpoints(ep)
+	//	}
 }
 
 func (c *controller) Run(stopCh <-chan struct{}) error {
