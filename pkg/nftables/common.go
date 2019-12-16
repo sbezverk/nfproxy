@@ -2,7 +2,6 @@ package nftables
 
 import (
 	"fmt"
-	"net"
 
 	"github.com/google/nftables"
 	"github.com/google/nftables/binaryutil"
@@ -367,39 +366,38 @@ func setupInitialFilterRules(ci nftableslib.ChainsInterface, clusterCIDR string)
 	return nil
 }
 
-func setupk8sFilterRules(ti nftableslib.TablesInterface, ci nftableslib.ChainsInterface) error {
-	// Emulating 1 ports sets for service without endpoints
-	si, err := ti.Tables().TableSets("ipv4table", nftables.TableFamilyIPv4)
-	if err != nil {
-		return fmt.Errorf("failed to get sets interface for table ipv4table with error: %+v", err)
+func setupk8sFilterRules(si nftableslib.SetsInterface, ci nftableslib.ChainsInterface, ipv6 bool) error {
+	var dataType nftables.SetDatatype
+	dataType = nftables.TypeIPAddr
+	if ipv6 {
+		dataType = nftables.TypeIP6Addr
 	}
-
 	noEndpointSet := nftableslib.SetAttributes{
 		Name:     "no-endpoints-services",
 		Constant: false,
 		IsMap:    true,
-		KeyType:  nftableslib.GenSetKeyType(nftables.TypeIPAddr, nftables.TypeInetService),
+		KeyType:  nftableslib.GenSetKeyType(dataType, nftables.TypeInetService),
 		DataType: nftables.TypeVerdict,
 	}
-	se := []nftables.SetElement{}
+	// se := []nftables.SetElement{}
 	// It is a hack for now just to see it is working, ip and port will be extracted from the service object
-	port1 := uint16(8989)
-	ip1 := "192.168.80.104"
-	ip2 := "57.131.151.19"
-	ra := setActionVerdict(unix.NFT_JUMP, k8sFilterDoReject)
-	se1, err := nftableslib.MakeConcatElement(nftables.TypeIPAddr, nftables.TypeInetService,
-		nftableslib.ElementValue{IPAddr: net.ParseIP(ip1).To4()}, nftableslib.ElementValue{InetService: &port1}, ra)
-	if err != nil {
-		return fmt.Errorf("failed to create a concat element with error: %+v", err)
-	}
-	se2, err := nftableslib.MakeConcatElement(nftables.TypeIPAddr, nftables.TypeInetService,
-		nftableslib.ElementValue{IPAddr: net.ParseIP(ip2).To4()}, nftableslib.ElementValue{InetService: &port1}, ra)
-	if err != nil {
-		return fmt.Errorf("failed to create a concat element with error: %+v", err)
-	}
-	se = append(se, *se1)
-	se = append(se, *se2)
-	neSet, err := si.Sets().CreateSet(&noEndpointSet, se)
+	//	port1 := uint16(8989)
+	//	ip1 := "192.168.80.104"
+	//	ip2 := "57.131.151.19"
+	//	ra := setActionVerdict(unix.NFT_JUMP, k8sFilterDoReject)
+	//	se1, err := nftableslib.MakeConcatElement(nftables.TypeIPAddr, nftables.TypeInetService,
+	//		nftableslib.ElementValue{IPAddr: net.ParseIP(ip1).To4()}, nftableslib.ElementValue{InetService: &port1}, ra)
+	//	if err != nil {
+	//		return fmt.Errorf("failed to create a concat element with error: %+v", err)
+	//	}
+	//	se2, err := nftableslib.MakeConcatElement(nftables.TypeIPAddr, nftables.TypeInetService,
+	//		nftableslib.ElementValue{IPAddr: net.ParseIP(ip2).To4()}, nftableslib.ElementValue{InetService: &port1}, ra)
+	//	if err != nil {
+	//		return fmt.Errorf("failed to create a concat element with error: %+v", err)
+	//	}
+	//	se = append(se, *se1)
+	//	se = append(se, *se2)
+	neSet, err := si.Sets().CreateSet(&noEndpointSet, nil)
 	if err != nil {
 		return fmt.Errorf("failed to create a set of svc ports without endpoints with error: %+v", err)
 
@@ -407,7 +405,7 @@ func setupk8sFilterRules(ti nftableslib.TablesInterface, ci nftableslib.ChainsIn
 	concatElements := make([]*nftableslib.ConcatElement, 0)
 	concatElements = append(concatElements,
 		&nftableslib.ConcatElement{
-			EType: nftables.TypeIPAddr,
+			EType: dataType,
 		},
 	)
 	concatElements = append(concatElements,
@@ -429,15 +427,8 @@ func setupk8sFilterRules(ti nftableslib.TablesInterface, ci nftableslib.ChainsIn
 			},
 		},
 	}
-	ri, err := ci.Chains().Chain(k8sFilterServices)
-	if err != nil {
+	if _, err := programChainRules(ci, k8sFilterServices, servicesRules); err != nil {
 		return err
-	}
-	for _, r := range servicesRules {
-		_, err := ri.Rules().CreateImm(&r)
-		if err != nil {
-			return err
-		}
 	}
 
 	return nil
@@ -445,11 +436,17 @@ func setupk8sFilterRules(ti nftableslib.TablesInterface, ci nftableslib.ChainsIn
 
 func programCommonChainsRules(nfti *NFTInterface, clusterCIDRIPv4, clusterCIDRIPv6 string) error {
 	var clusterCIDR string
+	var ipv6 bool
+	var si nftableslib.SetsInterface
 	for _, ci := range []nftableslib.ChainsInterface{nfti.CIv4, nfti.CIv6} {
 		if ci == nfti.CIv4 {
 			clusterCIDR = clusterCIDRIPv4
+			ipv6 = false
+			si = nfti.SIv4
 		} else {
 			clusterCIDR = clusterCIDRIPv6
+			ipv6 = true
+			si = nfti.SIv6
 		}
 		// Programming chains and initial rules only if localAddress is specified
 		if clusterCIDR != "" {
@@ -457,6 +454,9 @@ func programCommonChainsRules(nfti *NFTInterface, clusterCIDRIPv4, clusterCIDRIP
 				return err
 			}
 			if err := setupInitialFilterRules(ci, clusterCIDR); err != nil {
+				return err
+			}
+			if err := setupk8sFilterRules(si, ci, ipv6); err != nil {
 				return err
 			}
 			if err := setupInitialNATRules(ci); err != nil {
