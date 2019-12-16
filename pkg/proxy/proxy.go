@@ -313,6 +313,7 @@ func (p *proxy) UpdateEndpoints(epOld, epNew *v1.Endpoints) {
 	klog.Infof("Updte endpoint: %s/%s subset: %+v", epNew.Namespace, epNew.Name, epNew.Subsets)
 	if !reflect.DeepEqual(epOld.Subsets, epNew.Subsets) {
 		klog.Info("Old and New Endpoint have different Subsets")
+		// First check if any new endpoint rules needs to be added
 		for i := range epNew.Subsets {
 			ss := &epNew.Subsets[i]
 			for i := range ss.Ports {
@@ -352,6 +353,7 @@ func (p *proxy) UpdateEndpoints(epOld, epNew *v1.Endpoints) {
 					Protocol:       port.Protocol,
 				}
 				eps, ok := p.endpointsMap[svcPortName]
+				// If key does not exist, then nothing to delete, going to the next entry
 				if !ok {
 					continue
 				}

@@ -35,7 +35,7 @@ type EPnft struct {
 }
 
 // InitNFTables initializes connection to netfilter and instantiates nftables table interface
-func InitNFTables() (*NFTInterface, error) {
+func InitNFTables(clusterCIDRIPv4, clusterCIDRIPv6 string) (*NFTInterface, error) {
 	//  Initializing connection to netfilter
 	ti, err := initNFTables()
 	if err != nil {
@@ -52,7 +52,7 @@ func InitNFTables() (*NFTInterface, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := programCommonChainsRules(nfti); err != nil {
+	if err := programCommonChainsRules(nfti, clusterCIDRIPv4, clusterCIDRIPv6); err != nil {
 		return nil, err
 	}
 

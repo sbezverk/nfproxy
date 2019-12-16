@@ -59,7 +59,7 @@ func main() {
 	}
 
 	// Attempt to Init nftables, if fails exit with error
-	nfti, err := nftables.InitNFTables()
+	nfti, err := nftables.InitNFTables("57.112.0.0/12", "")
 	if err != nil {
 		klog.Errorf("nfproxy failed to initialize nftables with error: %+v", err)
 		os.Exit(1)

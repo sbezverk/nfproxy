@@ -167,6 +167,7 @@ github.com/google/martian v2.1.0+incompatible/go.mod h1:9I4somxYTbIHy5NJKHRl3wXi
 github.com/google/nftables v0.0.0-20190906062827-5d14089d2edc/go.mod h1:DfTD7lq9Gq5pLrgCmJDbGtrcWF/h7i5XWgEC/6bQu0s=
 github.com/google/nftables v0.0.0-20191201091042-4f16059f2d43 h1:keZqRFK0x74GIik4LG/ZI7FxGvR4q3L70xjaSS6q5l4=
 github.com/google/nftables v0.0.0-20191201091042-4f16059f2d43/go.mod h1:cfspEyr/Ap+JDIITA+N9a0ernqG0qZ4W1aqMRgDZa1g=
+github.com/google/nftables v0.0.0-20191213223506-e2e83d0ff597 h1:ECEg9v4D4g4txxQMLiNuPeeXWasl2wnCrleHz242zLI=
 github.com/google/pprof v0.0.0-20181206194817-3ea8567a2e57/go.mod h1:zfwlbNMJ+OItoe0UupaVj+oy1omPYYDuagoSzA8v9mc=
 github.com/google/renameio v0.1.0/go.mod h1:KWCgfxg9yswjAJkECMjeO8J8rahYeXnNhOm40UhjYkI=
 github.com/google/uuid v1.1.1 h1:Gkbcsh/GbpXz7lPftLA3P6TYMwjCLYm83jiFQZF/3gY=

@@ -2,13 +2,23 @@ package nftables
 
 import (
 	"fmt"
+	"net"
 
 	"github.com/google/nftables"
+	"github.com/google/nftables/binaryutil"
 	"github.com/sbezverk/nftableslib"
 	"golang.org/x/sys/unix"
 )
 
 const (
+	filterInput       = "nfproxy-filter-input"
+	filterOutput      = "nfproxy-filter-output"
+	filterForward     = "nfproxy-filter-forward"
+	k8sFilterFirewall = "k8s-nfproxy-filter-firewall"
+	k8sFilterServices = "k8s-nfproxy-filter-services"
+	k8sFilterForward  = "k8s-nfproxy-filter-forward"
+	k8sFilterDoReject = "k8s-nfproxy-filter-do-reject"
+
 	natPrerouting     = "nfproxy-nat-preroutin"
 	natOutput         = "nfproxy-nat-output"
 	natPostrouting    = "nfproxy-nat-postrouting"
@@ -37,12 +47,55 @@ func setIPAddr(addr string) *nftableslib.IPAddr {
 	return a
 }
 
-func setupNATChains(ci nftableslib.ChainsInterface) error {
+func setupNFProxyChains(ci nftableslib.ChainsInterface) error {
 	// nat type chains
 	natChains := []struct {
 		name  string
 		attrs *nftableslib.ChainAttributes
 	}{
+		{
+			name: filterInput,
+			attrs: &nftableslib.ChainAttributes{
+				Type:     nftables.ChainTypeFilter,
+				Priority: 0,
+				Hook:     nftables.ChainHookInput,
+				Policy:   nftableslib.ChainPolicyAccept,
+			},
+		},
+		{
+			name: filterOutput,
+			attrs: &nftableslib.ChainAttributes{
+				Type:     nftables.ChainTypeFilter,
+				Priority: 0,
+				Hook:     nftables.ChainHookOutput,
+				Policy:   nftableslib.ChainPolicyAccept,
+			},
+		},
+		{
+			name: filterForward,
+			attrs: &nftableslib.ChainAttributes{
+				Type:     nftables.ChainTypeFilter,
+				Priority: 0,
+				Hook:     nftables.ChainHookForward,
+				Policy:   nftableslib.ChainPolicyAccept,
+			},
+		},
+		{
+			name:  k8sFilterFirewall,
+			attrs: nil,
+		},
+		{
+			name:  k8sFilterServices,
+			attrs: nil,
+		},
+		{
+			name:  k8sFilterForward,
+			attrs: nil,
+		},
+		{
+			name:  k8sFilterDoReject,
+			attrs: nil,
+		},
 		{
 			name: natPrerouting,
 			attrs: &nftableslib.ChainAttributes{
@@ -162,13 +215,253 @@ func setupInitialNATRules(ci nftableslib.ChainsInterface) error {
 	return nil
 }
 
-func programCommonChainsRules(nfti *NFTInterface) error {
-	for _, ci := range []nftableslib.ChainsInterface{nfti.CIv4, nfti.CIv6} {
-		if err := setupNATChains(ci); err != nil {
+func setupInitialFilterRules(ci nftableslib.ChainsInterface, clusterCIDR string) error {
+	inputRules := []nftableslib.Rule{
+		{
+			// -A INPUT -m conntrack --ctstate NEW -m comment --comment "kubernetes service portals" -j KUBE-SERVICES
+			Conntracks: []*nftableslib.Conntrack{
+				{
+					Key:   unix.NFT_CT_STATE,
+					Value: binaryutil.BigEndian.PutUint32(nftableslib.CTStateNew),
+				},
+			},
+			Action: setActionVerdict(unix.NFT_JUMP, k8sFilterServices),
+		},
+		{
+			// -A INPUT -j KUBE-FIREWALL
+			Action: setActionVerdict(unix.NFT_JUMP, k8sFilterFirewall),
+		},
+	}
+	// Programming rules for Filter Chain Input hook
+	if _, err := programChainRules(ci, filterInput, inputRules); err != nil {
+		return err
+	}
+
+	forwardRules := []nftableslib.Rule{
+		{
+			// -A FORWARD -m comment --comment "kubernetes forwarding rules" -j KUBE-FORWARD
+			Action: setActionVerdict(unix.NFT_JUMP, k8sFilterForward),
+		},
+		{
+			// -A FORWARD -m conntrack --ctstate NEW -m comment --comment "kubernetes service portals" -j KUBE-SERVICES
+			Conntracks: []*nftableslib.Conntrack{
+				{
+					Key:   unix.NFT_CT_STATE,
+					Value: binaryutil.BigEndian.PutUint32(nftableslib.CTStateNew),
+				},
+			},
+			Action: setActionVerdict(unix.NFT_JUMP, k8sFilterServices),
+		},
+	}
+	// Programming rules for Filter Chain Forward hook
+	if _, err := programChainRules(ci, filterForward, forwardRules); err != nil {
+		return err
+	}
+
+	outputRules := []nftableslib.Rule{
+		{
+			// -A OUTPUT -m conntrack --ctstate NEW -m comment --comment "kubernetes service portals" -j KUBE-SERVICES
+			Conntracks: []*nftableslib.Conntrack{
+				{
+					Key:   unix.NFT_CT_STATE,
+					Value: binaryutil.BigEndian.PutUint32(nftableslib.CTStateNew),
+				},
+			},
+			Action: setActionVerdict(unix.NFT_JUMP, k8sFilterServices),
+		},
+		{
+			// -A OUTPUT -j KUBE-FIREWALL
+			Action: setActionVerdict(unix.NFT_JUMP, k8sFilterFirewall),
+		},
+	}
+	// Programming rules for Filter Chain Output hook
+	if _, err := programChainRules(ci, filterOutput, outputRules); err != nil {
+		return err
+	}
+
+	firewallRules := []nftableslib.Rule{
+		{
+			// -A KUBE-FIREWALL -m comment --comment "kubernetes firewall for dropping marked packets" -m mark --mark 0x8000/0x8000 -j DROP
+			Meta: &nftableslib.Meta{
+				Mark: &nftableslib.MetaMark{
+					Set:   false,
+					Value: 0x8000,
+				},
+			},
+			Action: setActionVerdict(nftableslib.NFT_DROP),
+		},
+	}
+	// Programming rules for Filter Chain Firewall hook
+	if _, err := programChainRules(ci, k8sFilterFirewall, firewallRules); err != nil {
+		return err
+	}
+
+	k8sForwardRules := []nftableslib.Rule{
+		{
+			// -A KUBE-FORWARD -m conntrack --ctstate INVALID -j DROP
+			Conntracks: []*nftableslib.Conntrack{
+				{
+					Key:   unix.NFT_CT_STATE,
+					Value: binaryutil.BigEndian.PutUint32(nftableslib.CTStateInvalid),
+				},
+			},
+			Action: setActionVerdict(nftableslib.NFT_DROP),
+		},
+		{
+			// -A KUBE-FORWARD -m comment --comment "kubernetes forwarding rules" -m mark --mark 0x4000/0x4000 -j ACCEPT
+			Meta: &nftableslib.Meta{
+				Mark: &nftableslib.MetaMark{
+					Set:   false,
+					Value: 0x4000,
+				},
+			},
+			Action: setActionVerdict(nftableslib.NFT_ACCEPT),
+		},
+		{
+			// -A KUBE-FORWARD -s 57.112.0.0/12 -m comment --comment "kubernetes forwarding conntrack pod source rule" -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
+			L3: &nftableslib.L3Rule{
+				Src: &nftableslib.IPAddrSpec{
+					List: []*nftableslib.IPAddr{setIPAddr(clusterCIDR)},
+				},
+			},
+			Conntracks: []*nftableslib.Conntrack{
+				{
+					Key:   unix.NFT_CT_STATE,
+					Value: binaryutil.BigEndian.PutUint32(nftableslib.CTStateRelated | nftableslib.CTStateEstablished),
+				},
+			},
+			Action: setActionVerdict(nftableslib.NFT_ACCEPT),
+		},
+		{
+			// -A KUBE-FORWARD -s 57.112.0.0/12 -m comment --comment "kubernetes forwarding conntrack pod source rule" -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
+			L3: &nftableslib.L3Rule{
+				Dst: &nftableslib.IPAddrSpec{
+					List: []*nftableslib.IPAddr{setIPAddr(clusterCIDR)},
+				},
+			},
+			Conntracks: []*nftableslib.Conntrack{
+				{
+					Key:   unix.NFT_CT_STATE,
+					Value: binaryutil.BigEndian.PutUint32(nftableslib.CTStateRelated | nftableslib.CTStateEstablished),
+				},
+			},
+			Action: setActionVerdict(nftableslib.NFT_ACCEPT),
+		},
+	}
+	// Programming rules for Filter Chain Firewall hook
+	if _, err := programChainRules(ci, k8sFilterForward, k8sForwardRules); err != nil {
+		return err
+	}
+
+	rejectAction, _ := nftableslib.SetReject(unix.NFT_REJECT_ICMP_UNREACH, unix.NFT_REJECT_ICMPX_PORT_UNREACH)
+	k8sRejectRules := []nftableslib.Rule{
+		{
+			Action: rejectAction,
+		},
+	}
+	// Programming rules for Filter Chain Firewall hook
+	if _, err := programChainRules(ci, k8sFilterDoReject, k8sRejectRules); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func setupk8sFilterRules(ti nftableslib.TablesInterface, ci nftableslib.ChainsInterface) error {
+	// Emulating 1 ports sets for service without endpoints
+	si, err := ti.Tables().TableSets("ipv4table", nftables.TableFamilyIPv4)
+	if err != nil {
+		return fmt.Errorf("failed to get sets interface for table ipv4table with error: %+v", err)
+	}
+
+	noEndpointSet := nftableslib.SetAttributes{
+		Name:     "no-endpoints-services",
+		Constant: false,
+		IsMap:    true,
+		KeyType:  nftableslib.GenSetKeyType(nftables.TypeIPAddr, nftables.TypeInetService),
+		DataType: nftables.TypeVerdict,
+	}
+	se := []nftables.SetElement{}
+	// It is a hack for now just to see it is working, ip and port will be extracted from the service object
+	port1 := uint16(8989)
+	ip1 := "192.168.80.104"
+	ip2 := "57.131.151.19"
+	ra := setActionVerdict(unix.NFT_JUMP, k8sFilterDoReject)
+	se1, err := nftableslib.MakeConcatElement(nftables.TypeIPAddr, nftables.TypeInetService,
+		nftableslib.ElementValue{IPAddr: net.ParseIP(ip1).To4()}, nftableslib.ElementValue{InetService: &port1}, ra)
+	if err != nil {
+		return fmt.Errorf("failed to create a concat element with error: %+v", err)
+	}
+	se2, err := nftableslib.MakeConcatElement(nftables.TypeIPAddr, nftables.TypeInetService,
+		nftableslib.ElementValue{IPAddr: net.ParseIP(ip2).To4()}, nftableslib.ElementValue{InetService: &port1}, ra)
+	if err != nil {
+		return fmt.Errorf("failed to create a concat element with error: %+v", err)
+	}
+	se = append(se, *se1)
+	se = append(se, *se2)
+	neSet, err := si.Sets().CreateSet(&noEndpointSet, se)
+	if err != nil {
+		return fmt.Errorf("failed to create a set of svc ports without endpoints with error: %+v", err)
+
+	}
+	concatElements := make([]*nftableslib.ConcatElement, 0)
+	concatElements = append(concatElements,
+		&nftableslib.ConcatElement{
+			EType: nftables.TypeIPAddr,
+		},
+	)
+	concatElements = append(concatElements,
+		&nftableslib.ConcatElement{
+			EType:  nftables.TypeInetService,
+			EProto: unix.IPPROTO_TCP,
+		},
+	)
+	servicesRules := []nftableslib.Rule{
+		{
+			Concat: &nftableslib.Concat{
+				VMap: true,
+				SetRef: &nftableslib.SetRef{
+					Name:  neSet.Name,
+					ID:    neSet.ID,
+					IsMap: true,
+				},
+				Elements: concatElements,
+			},
+		},
+	}
+	ri, err := ci.Chains().Chain(k8sFilterServices)
+	if err != nil {
+		return err
+	}
+	for _, r := range servicesRules {
+		_, err := ri.Rules().CreateImm(&r)
+		if err != nil {
 			return err
 		}
-		if err := setupInitialNATRules(ci); err != nil {
-			return err
+	}
+
+	return nil
+}
+
+func programCommonChainsRules(nfti *NFTInterface, clusterCIDRIPv4, clusterCIDRIPv6 string) error {
+	var clusterCIDR string
+	for _, ci := range []nftableslib.ChainsInterface{nfti.CIv4, nfti.CIv6} {
+		if ci == nfti.CIv4 {
+			clusterCIDR = clusterCIDRIPv4
+		} else {
+			clusterCIDR = clusterCIDRIPv6
+		}
+		// Programming chains and initial rules only if localAddress is specified
+		if clusterCIDR != "" {
+			if err := setupNFProxyChains(ci); err != nil {
+				return err
+			}
+			if err := setupInitialFilterRules(ci, clusterCIDR); err != nil {
+				return err
+			}
+			if err := setupInitialNATRules(ci); err != nil {
+				return err
+			}
 		}
 	}
 	return nil
