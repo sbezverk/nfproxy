@@ -26,6 +26,8 @@ const (
 	k8sNATServices    = "k8s-nfproxy-nat-services"
 	k8sNATNodeports   = "k8s-nfproxy-nat-nodeports"
 	k8sNATPostrouting = "k8s-nfproxy-nat-postrouting"
+
+	k8sNoEndpointsSet = "no-endpoints-services"
 )
 
 func setActionVerdict(key int, chain ...string) *nftableslib.RuleAction {
@@ -373,30 +375,12 @@ func setupk8sFilterRules(si nftableslib.SetsInterface, ci nftableslib.ChainsInte
 		dataType = nftables.TypeIP6Addr
 	}
 	noEndpointSet := nftableslib.SetAttributes{
-		Name:     "no-endpoints-services",
+		Name:     k8sNoEndpointsSet,
 		Constant: false,
 		IsMap:    true,
 		KeyType:  nftableslib.GenSetKeyType(dataType, nftables.TypeInetService),
 		DataType: nftables.TypeVerdict,
 	}
-	// se := []nftables.SetElement{}
-	// It is a hack for now just to see it is working, ip and port will be extracted from the service object
-	//	port1 := uint16(8989)
-	//	ip1 := "192.168.80.104"
-	//	ip2 := "57.131.151.19"
-	//	ra := setActionVerdict(unix.NFT_JUMP, k8sFilterDoReject)
-	//	se1, err := nftableslib.MakeConcatElement(nftables.TypeIPAddr, nftables.TypeInetService,
-	//		nftableslib.ElementValue{IPAddr: net.ParseIP(ip1).To4()}, nftableslib.ElementValue{InetService: &port1}, ra)
-	//	if err != nil {
-	//		return fmt.Errorf("failed to create a concat element with error: %+v", err)
-	//	}
-	//	se2, err := nftableslib.MakeConcatElement(nftables.TypeIPAddr, nftables.TypeInetService,
-	//		nftableslib.ElementValue{IPAddr: net.ParseIP(ip2).To4()}, nftableslib.ElementValue{InetService: &port1}, ra)
-	//	if err != nil {
-	//		return fmt.Errorf("failed to create a concat element with error: %+v", err)
-	//	}
-	//	se = append(se, *se1)
-	//	se = append(se, *se2)
 	neSet, err := si.Sets().CreateSet(&noEndpointSet, nil)
 	if err != nil {
 		return fmt.Errorf("failed to create a set of svc ports without endpoints with error: %+v", err)
@@ -448,7 +432,7 @@ func programCommonChainsRules(nfti *NFTInterface, clusterCIDRIPv4, clusterCIDRIP
 			ipv6 = true
 			si = nfti.SIv6
 		}
-		// Programming chains and initial rules only if localAddress is specified
+		// Programming chains and initial rules only if clusterCIDR is specified
 		if clusterCIDR != "" {
 			if err := setupNFProxyChains(ci); err != nil {
 				return err

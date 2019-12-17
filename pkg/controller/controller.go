@@ -31,6 +31,9 @@ type controller struct {
 }
 
 func (c *controller) handleAddService(obj interface{}) {
+	if !c.servicesSynced() {
+		return
+	}
 	svc, ok := obj.(*v1.Service)
 	if !ok {
 		utilruntime.HandleError(fmt.Errorf("unexpected object type: %v", obj))
@@ -40,6 +43,9 @@ func (c *controller) handleAddService(obj interface{}) {
 }
 
 func (c *controller) handleUpdateService(oldObj, newObj interface{}) {
+	if !c.servicesSynced() {
+		return
+	}
 	svcOld, ok := oldObj.(*v1.Service)
 	if !ok {
 		utilruntime.HandleError(fmt.Errorf("unexpected object type: %v", oldObj))
@@ -57,6 +63,9 @@ func (c *controller) handleUpdateService(oldObj, newObj interface{}) {
 }
 
 func (c *controller) handleDeleteService(obj interface{}) {
+	if !c.servicesSynced() {
+		return
+	}
 	svc, ok := obj.(*v1.Service)
 	if !ok {
 		tombstone, ok := obj.(cache.DeletedFinalStateUnknown)
@@ -73,6 +82,9 @@ func (c *controller) handleDeleteService(obj interface{}) {
 }
 
 func (c *controller) handleAddEndpoint(obj interface{}) {
+	if !c.endpointsSynced() {
+		return
+	}
 	ep, ok := obj.(*v1.Endpoints)
 	if !ok {
 		utilruntime.HandleError(fmt.Errorf("unexpected object type: %v", obj))
@@ -85,6 +97,9 @@ func (c *controller) handleAddEndpoint(obj interface{}) {
 }
 
 func (c *controller) handleUpdateEndpoint(oldObj, newObj interface{}) {
+	if !c.endpointsSynced() {
+		return
+	}
 	epOld, ok := oldObj.(*v1.Endpoints)
 	if !ok {
 		utilruntime.HandleError(fmt.Errorf("unexpected object type: %v", oldObj))
@@ -105,6 +120,9 @@ func (c *controller) handleUpdateEndpoint(oldObj, newObj interface{}) {
 }
 
 func (c *controller) handleDeleteEndpoint(obj interface{}) {
+	if !c.endpointsSynced() {
+		return
+	}
 	ep, ok := obj.(*v1.Endpoints)
 	if !ok {
 		tombstone, ok := obj.(cache.DeletedFinalStateUnknown)
@@ -133,6 +151,7 @@ func (c *controller) Run(stopCh <-chan struct{}) error {
 	if ok := cache.WaitForCacheSync(stopCh, c.endpointsSynced); !ok {
 		return fmt.Errorf("failed to wait for caches to sync")
 	}
+
 	klog.Info("Endpoints cache has synced...")
 
 	return nil

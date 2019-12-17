@@ -40,3 +40,9 @@ func servicePortEndpointChainName(servicePortName string, protocol string, endpo
 	encoded := base32.StdEncoding.EncodeToString(hash[:])
 	return "k8s-nfproxy-sep-" + encoded[:16]
 }
+
+func servicePortSvcChainName(servicePortName string, protocol string, service string) string {
+	hash := sha256.Sum256([]byte(servicePortName + protocol + service))
+	encoded := base32.StdEncoding.EncodeToString(hash[:])
+	return "k8s-nfproxy-svc-" + encoded[:16]
+}

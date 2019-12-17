@@ -1,6 +1,9 @@
 package nftables
 
 import (
+	"fmt"
+	"net"
+
 	"github.com/google/nftables"
 	"github.com/sbezverk/nftableslib"
 	"golang.org/x/sys/unix"
@@ -20,10 +23,9 @@ type NFTInterface struct {
 	SIv6 nftableslib.SetsInterface
 }
 
-// EPRule defines nftables chain name, rule and once programmed, rule id
-type EPRule struct {
+// Rule defines nftables chain name, rule and once programmed, rule id
+type Rule struct {
 	Chain  string
-	Rule   nftableslib.Rule
 	RuleID []uint64
 }
 
@@ -31,7 +33,19 @@ type EPRule struct {
 // rules, sets in ipv4 and ipv6 tables and chains.
 type EPnft struct {
 	Interface *NFTInterface
-	Rule      map[nftables.TableFamily]EPRule
+	Rule      map[nftables.TableFamily]Rule
+}
+
+// SVCChain defines a map of chains a service uses for its rules, the key is chain names
+type SVCChain struct {
+	Chain map[string]Rule
+}
+
+// SVCnft defines per IP Family nftables chains used by individual service.
+type SVCnft struct {
+	Interface     *NFTInterface
+	Chains        map[nftables.TableFamily]SVCChain
+	WithEndpoints bool
 }
 
 // InitNFTables initializes connection to netfilter and instantiates nftables table interface
@@ -143,11 +157,11 @@ func AddEndpointRules(nfti *NFTInterface, tableFamily nftables.TableFamily, chai
 		},
 	}
 	if err := ci.Chains().CreateImm(chain, nil); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("AddEndpointRules: ci.Chains().CreateImm exit with error: %+v", err)
 	}
 	id, err := programChainRules(ci, chain, rules)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("AddEndpointRules: programChainRules exit with error: %+v", err)
 	}
 
 	return id, nil
@@ -179,12 +193,12 @@ func programChainRules(ci nftableslib.ChainsInterface, chain string, rules []nft
 	var err error
 	ri, err := ci.Chains().Chain(chain)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("programChainRules: ci.Chains().Chain exited with error: %+v", err)
 	}
 	for _, r := range rules {
 		id, err := ri.Rules().CreateImm(&r)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("programChainRules: ri.Rules().CreateImm exited with error: %+v", err)
 		}
 		ids = append(ids, id)
 	}
@@ -201,6 +215,84 @@ func deleteChainRules(ci nftableslib.ChainsInterface, chain string, rules []uint
 		if err := ri.Rules().DeleteImm(r); err != nil {
 			return err
 		}
+	}
+
+	return nil
+}
+
+// GetSvcChain builds a chain map used by a specific service
+func GetSvcChain(tableFamily nftables.TableFamily, svcChainName string) map[nftables.TableFamily]SVCChain {
+	chains := make(map[nftables.TableFamily]SVCChain)
+	chain := SVCChain{
+		Chain: make(map[string]Rule),
+	}
+	// k8sNATNodeports chain is used if service has any node ports
+	chain.Chain[k8sNATNodeports] = Rule{
+		Chain:  k8sNATNodeports,
+		RuleID: nil,
+	}
+	// k8sNATServices is services chain used by all services to expose ips/ports
+	chain.Chain[k8sNATServices] = Rule{
+		Chain:  k8sNATServices,
+		RuleID: nil,
+	}
+	//  svcChainName is services chain used by a specific service
+	chain.Chain[svcChainName] = Rule{
+		Chain:  k8sNATServices,
+		RuleID: nil,
+	}
+	chains[tableFamily] = chain
+
+	return chains
+}
+
+// AddToNoEndpointsList adds service's ip and port to No Endpoints Set to reject incoming to the service traffic
+func AddToNoEndpointsList(nfti *NFTInterface, tableFamily nftables.TableFamily, addr string, port uint16) error {
+	si := nfti.SIv4
+	ipaddr := net.ParseIP(addr).To4()
+	dataType := nftables.TypeIPAddr
+	if tableFamily == nftables.TableFamilyIPv6 {
+		si = nfti.SIv6
+		ipaddr = net.ParseIP(addr).To16()
+		dataType = nftables.TypeIP6Addr
+	}
+	se := []nftables.SetElement{}
+	ra := setActionVerdict(unix.NFT_JUMP, k8sFilterDoReject)
+	element, err := nftableslib.MakeConcatElement(dataType, nftables.TypeInetService,
+		nftableslib.ElementValue{IPAddr: ipaddr}, nftableslib.ElementValue{InetService: &port}, ra)
+	if err != nil {
+		return fmt.Errorf("failed to create a concat element with error: %+v", err)
+	}
+	se = append(se, *element)
+
+	if err := si.Sets().SetAddElements(k8sNoEndpointsSet, se); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// RemoveFromNoEndpointsList removes service's ip and port from No Endpoints Set to allow service's traffic in
+func RemoveFromNoEndpointsList(nfti *NFTInterface, tableFamily nftables.TableFamily, addr string, port uint16) error {
+	si := nfti.SIv4
+	ipaddr := net.ParseIP(addr).To4()
+	dataType := nftables.TypeIPAddr
+	if tableFamily == nftables.TableFamilyIPv6 {
+		si = nfti.SIv6
+		ipaddr = net.ParseIP(addr).To16()
+		dataType = nftables.TypeIP6Addr
+	}
+	se := []nftables.SetElement{}
+	ra := setActionVerdict(unix.NFT_JUMP, k8sFilterDoReject)
+	element, err := nftableslib.MakeConcatElement(dataType, nftables.TypeInetService,
+		nftableslib.ElementValue{IPAddr: ipaddr}, nftableslib.ElementValue{InetService: &port}, ra)
+	if err != nil {
+		return fmt.Errorf("failed to create a concat element with error: %+v", err)
+	}
+	se = append(se, *element)
+
+	if err := si.Sets().SetDelElements(k8sNoEndpointsSet, se); err != nil {
+		return err
 	}
 
 	return nil
