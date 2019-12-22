@@ -391,8 +391,6 @@ func setupk8sFilterRules(si nftableslib.SetsInterface, ci nftableslib.ChainsInte
 		&nftableslib.ConcatElement{
 			EType: dataType,
 		},
-	)
-	concatElements = append(concatElements,
 		&nftableslib.ConcatElement{
 			EType:  nftables.TypeInetService,
 			EProto: unix.IPPROTO_TCP,

@@ -1,18 +1,25 @@
 package nftables
 
 import (
+	"errors"
 	"fmt"
 	"net"
+	"time"
 
 	"github.com/google/nftables"
 	"github.com/sbezverk/nftableslib"
 	"golang.org/x/sys/unix"
 	v1 "k8s.io/api/core/v1"
+	"k8s.io/klog"
 )
 
 const (
 	nfV4TableName = "kube-nfproxy-v4"
 	nfV6TableName = "kube-nfproxy-v6"
+)
+
+var (
+	nfRuleRetryInterval = time.Second * 30
 )
 
 // NFTInterface provides interfaces to access ipv4/6 chains and ipv4/6 sets
@@ -247,7 +254,7 @@ func GetSvcChain(tableFamily nftables.TableFamily, svcChainName string) map[nfta
 }
 
 // AddToNoEndpointsList adds service's ip and port to No Endpoints Set to reject incoming to the service traffic
-func AddToNoEndpointsList(nfti *NFTInterface, tableFamily nftables.TableFamily, addr string, port uint16) error {
+func AddToNoEndpointsList(nfti *NFTInterface, tableFamily nftables.TableFamily, proto string, addr string, port uint16) error {
 	si := nfti.SIv4
 	ipaddr := net.ParseIP(addr).To4()
 	dataType := nftables.TypeIPAddr
@@ -258,22 +265,33 @@ func AddToNoEndpointsList(nfti *NFTInterface, tableFamily nftables.TableFamily, 
 	}
 	se := []nftables.SetElement{}
 	ra := setActionVerdict(unix.NFT_JUMP, k8sFilterDoReject)
-	element, err := nftableslib.MakeConcatElement(dataType, nftables.TypeInetService,
-		nftableslib.ElementValue{IPAddr: ipaddr}, nftableslib.ElementValue{InetService: &port}, ra)
+	element, err := nftableslib.MakeConcatElement([]nftables.SetDatatype{dataType, nftables.TypeInetService},
+		[]nftableslib.ElementValue{{IPAddr: ipaddr}, {InetService: &port}}, ra)
 	if err != nil {
 		return fmt.Errorf("failed to create a concat element with error: %+v", err)
 	}
 	se = append(se, *element)
 
-	if err := si.Sets().SetAddElements(k8sNoEndpointsSet, se); err != nil {
+	if err = si.Sets().SetAddElements(k8sNoEndpointsSet, se); err != nil {
+		// TODO Add logic to retry, for now just error out
+		if errors.Is(err, unix.EBUSY) {
+			klog.Warningf("nfproxy: SetAddElements for %s:%s:%d failed with error: %v", proto, addr, port, errors.Unwrap(err))
+			return err
+		}
+		if errors.Is(err, unix.EEXIST) {
+			klog.Warningf("nfproxy: SetAddElements for %s:%s:%d already exists", proto, addr, port)
+			return nil
+		}
+		klog.Errorf("nfproxy: SetAddElements for %s:%s:%d failed with error: %v", proto, addr, port, err)
 		return err
 	}
 
+	klog.Infof("nfproxy: SetAddElements for %s:%s:%d succeeded", proto, addr, port)
 	return nil
 }
 
 // RemoveFromNoEndpointsList removes service's ip and port from No Endpoints Set to allow service's traffic in
-func RemoveFromNoEndpointsList(nfti *NFTInterface, tableFamily nftables.TableFamily, addr string, port uint16) error {
+func RemoveFromNoEndpointsList(nfti *NFTInterface, tableFamily nftables.TableFamily, proto string, addr string, port uint16) error {
 	si := nfti.SIv4
 	ipaddr := net.ParseIP(addr).To4()
 	dataType := nftables.TypeIPAddr
@@ -282,18 +300,30 @@ func RemoveFromNoEndpointsList(nfti *NFTInterface, tableFamily nftables.TableFam
 		ipaddr = net.ParseIP(addr).To16()
 		dataType = nftables.TypeIP6Addr
 	}
+
 	se := []nftables.SetElement{}
 	ra := setActionVerdict(unix.NFT_JUMP, k8sFilterDoReject)
-	element, err := nftableslib.MakeConcatElement(dataType, nftables.TypeInetService,
-		nftableslib.ElementValue{IPAddr: ipaddr}, nftableslib.ElementValue{InetService: &port}, ra)
+	element, err := nftableslib.MakeConcatElement([]nftables.SetDatatype{dataType, nftables.TypeInetService},
+		[]nftableslib.ElementValue{{IPAddr: ipaddr}, {InetService: &port}}, ra)
 	if err != nil {
 		return fmt.Errorf("failed to create a concat element with error: %+v", err)
 	}
 	se = append(se, *element)
 
-	if err := si.Sets().SetDelElements(k8sNoEndpointsSet, se); err != nil {
+	if err = si.Sets().SetDelElements(k8sNoEndpointsSet, se); err != nil {
+		if errors.Is(err, unix.EBUSY) {
+			// TODO Add logic to retry, for now just error out
+			klog.Warningf("nfproxy: SetDelElements for %s:%s:%d failed with error: %v", proto, addr, port, errors.Unwrap(err))
+			return err
+		}
+		if errors.Is(err, unix.ENOENT) {
+			klog.Warningf("nfproxy: SetDelElements for %s:%s:%d does not exist", proto, addr, port)
+			return nil
+		}
+		klog.Errorf("nfproxy: SetDelElements for %s:%s:%d failed with error: %v", proto, addr, port, err)
 		return err
 	}
 
+	klog.Infof("nfproxy: SetDelElements for %s:%s:%d succeeded", proto, addr, port)
 	return nil
 }
