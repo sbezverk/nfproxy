@@ -39,7 +39,9 @@ func (c *controller) handleAddService(obj interface{}) {
 		utilruntime.HandleError(fmt.Errorf("unexpected object type: %v", obj))
 		return
 	}
-	c.proxy.AddService(svc)
+	if svc.Name == "app2" {
+		c.proxy.AddService(svc)
+	}
 }
 
 func (c *controller) handleUpdateService(oldObj, newObj interface{}) {
@@ -59,7 +61,9 @@ func (c *controller) handleUpdateService(oldObj, newObj interface{}) {
 	if svcOld.ObjectMeta.ResourceVersion == svcNew.ObjectMeta.ResourceVersion {
 		return
 	}
-	c.proxy.UpdateService(svcOld, svcNew)
+	if svcNew.Name == "app2" || svcOld.Name == "app2" {
+		c.proxy.UpdateService(svcOld, svcNew)
+	}
 }
 
 func (c *controller) handleDeleteService(obj interface{}) {
@@ -78,7 +82,9 @@ func (c *controller) handleDeleteService(obj interface{}) {
 			return
 		}
 	}
-	c.proxy.DeleteService(svc)
+	if svc.Name == "app2" {
+		c.proxy.DeleteService(svc)
+	}
 }
 
 func (c *controller) handleAddEndpoint(obj interface{}) {
@@ -90,10 +96,9 @@ func (c *controller) handleAddEndpoint(obj interface{}) {
 		utilruntime.HandleError(fmt.Errorf("unexpected object type: %v", obj))
 		return
 	}
-	//	if ep.Namespace == "default" && ep.Name == "portal" {
-	//		klog.Infof("Adding endpoint: %s/%s subsets: %+v", ep.Namespace, ep.Name, ep.Subsets)
-	c.proxy.AddEndpoints(ep)
-	//	}
+	if ep.Name == "app2" {
+		c.proxy.AddEndpoints(ep)
+	}
 }
 
 func (c *controller) handleUpdateEndpoint(oldObj, newObj interface{}) {
@@ -110,13 +115,13 @@ func (c *controller) handleUpdateEndpoint(oldObj, newObj interface{}) {
 		utilruntime.HandleError(fmt.Errorf("unexpected object type: %v", newObj))
 		return
 	}
+
 	if epOld.ObjectMeta.ResourceVersion == epNew.ObjectMeta.ResourceVersion {
 		return
 	}
-	//	if epNew.Namespace == "default" && epNew.Name == "portal" {
-	//		klog.Infof("Calling c.proxy.UpdateEndpoints for %s/%s subsets: %+v", epNew.Namespace, epNew.Name, epNew.Subsets)
-	c.proxy.UpdateEndpoints(epOld, epNew)
-	//	}
+	if epOld.Name == "app2" || epNew.Name == "app2" {
+		c.proxy.UpdateEndpoints(epOld, epNew)
+	}
 }
 
 func (c *controller) handleDeleteEndpoint(obj interface{}) {
@@ -135,10 +140,9 @@ func (c *controller) handleDeleteEndpoint(obj interface{}) {
 			return
 		}
 	}
-	//	if ep.Namespace == "default" && ep.Name == "portal" {
-	//		klog.Infof("Delete endpoint: %s/%s subsets: %+v", ep.Namespace, ep.Name, ep.Subsets)
-	c.proxy.DeleteEndpoints(ep)
-	//	}
+	if ep.Name == "app2" {
+		c.proxy.DeleteEndpoints(ep)
+	}
 }
 
 func (c *controller) Run(stopCh <-chan struct{}) error {

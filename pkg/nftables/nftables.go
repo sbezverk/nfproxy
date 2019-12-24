@@ -40,12 +40,14 @@ type Rule struct {
 // rules, sets in ipv4 and ipv6 tables and chains.
 type EPnft struct {
 	Interface *NFTInterface
-	Rule      map[nftables.TableFamily]Rule
+	Rule      map[nftables.TableFamily]*Rule
 }
 
 // SVCChain defines a map of chains a service uses for its rules, the key is chain names
 type SVCChain struct {
-	Chain map[string]Rule
+	// Service carries the name of service's specific chain, this chain usually points to one or more endpoit chains
+	Service string
+	Chain   map[string]*Rule
 }
 
 // SVCnft defines per IP Family nftables chains used by individual service.
@@ -231,20 +233,21 @@ func deleteChainRules(ci nftableslib.ChainsInterface, chain string, rules []uint
 func GetSvcChain(tableFamily nftables.TableFamily, svcChainName string) map[nftables.TableFamily]SVCChain {
 	chains := make(map[nftables.TableFamily]SVCChain)
 	chain := SVCChain{
-		Chain: make(map[string]Rule),
+		Service: svcChainName,
+		Chain:   make(map[string]*Rule),
 	}
 	// k8sNATNodeports chain is used if service has any node ports
-	chain.Chain[k8sNATNodeports] = Rule{
+	chain.Chain[k8sNATNodeports] = &Rule{
 		Chain:  k8sNATNodeports,
 		RuleID: nil,
 	}
 	// k8sNATServices is services chain used by all services to expose ips/ports
-	chain.Chain[k8sNATServices] = Rule{
+	chain.Chain[k8sNATServices] = &Rule{
 		Chain:  k8sNATServices,
 		RuleID: nil,
 	}
 	//  svcChainName is services chain used by a specific service
-	chain.Chain[svcChainName] = Rule{
+	chain.Chain[svcChainName] = &Rule{
 		Chain:  k8sNATServices,
 		RuleID: nil,
 	}
@@ -326,4 +329,48 @@ func RemoveFromNoEndpointsList(nfti *NFTInterface, tableFamily nftables.TableFam
 
 	klog.Infof("nfproxy: SetDelElements for %s:%s:%d succeeded", proto, addr, port)
 	return nil
+}
+
+// AddServiceChain adds a specific service's chain
+func AddServiceChain(nfti *NFTInterface, tableFamily nftables.TableFamily, chain string) error {
+	var ci nftableslib.ChainsInterface
+	switch tableFamily {
+	case nftables.TableFamilyIPv4:
+		ci = nfti.CIv4
+	case nftables.TableFamilyIPv6:
+		ci = nfti.CIv6
+	}
+	if err := ci.Chains().CreateImm(chain, nil); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// ProgramServiceEndpoints programms endpoints to the service chain, if multiple endpoint exists, endpoint rules
+// will be programmed for loadbalancing.
+func ProgramServiceEndpoints(nfti *NFTInterface, tableFamily nftables.TableFamily, chain string, epchains []string) ([]uint64, error) {
+	var ci nftableslib.ChainsInterface
+	switch tableFamily {
+	case nftables.TableFamilyIPv4:
+		ci = nfti.CIv4
+	case nftables.TableFamilyIPv6:
+		ci = nfti.CIv6
+	}
+
+	loadbalanceAction, err := nftableslib.SetLoadbalance(epchains)
+	if err != nil {
+		return nil, err
+	}
+	rules := []nftableslib.Rule{
+		{
+			Action: loadbalanceAction,
+		},
+	}
+	id, err := programChainRules(ci, chain, rules)
+	if err != nil {
+		return nil, fmt.Errorf("fail to program endpoints rules for service chain %s with error: %+v", chain, err)
+	}
+
+	return id, nil
 }
