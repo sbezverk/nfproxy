@@ -197,6 +197,23 @@ func DeleteEndpointRules(nfti *NFTInterface, tableFamily nftables.TableFamily, c
 	return nil
 }
 
+// DeleteServiceRules deletes nftables rules associated with a service
+func DeleteServiceRules(nfti *NFTInterface, tableFamily nftables.TableFamily, chain string, ruleID []uint64) error {
+	var ci nftableslib.ChainsInterface
+	switch tableFamily {
+	case nftables.TableFamilyIPv4:
+		ci = nfti.CIv4
+	case nftables.TableFamilyIPv6:
+		ci = nfti.CIv6
+	}
+
+	if err := deleteChainRules(ci, chain, ruleID); err != nil {
+		return err
+	}
+
+	return nil
+}
+
 func programChainRules(ci nftableslib.ChainsInterface, chain string, rules []nftableslib.Rule) ([]uint64, error) {
 	var ids []uint64
 	var err error
@@ -349,8 +366,10 @@ func AddServiceChain(nfti *NFTInterface, tableFamily nftables.TableFamily, chain
 
 // ProgramServiceEndpoints programms endpoints to the service chain, if multiple endpoint exists, endpoint rules
 // will be programmed for loadbalancing.
-func ProgramServiceEndpoints(nfti *NFTInterface, tableFamily nftables.TableFamily, chain string, epchains []string) ([]uint64, error) {
+func ProgramServiceEndpoints(nfti *NFTInterface, tableFamily nftables.TableFamily, chain string, epchains []string, ruleID []uint64) ([]uint64, error) {
 	var ci nftableslib.ChainsInterface
+	var err error
+	var id uint64
 	switch tableFamily {
 	case nftables.TableFamilyIPv4:
 		ci = nfti.CIv4
@@ -362,15 +381,29 @@ func ProgramServiceEndpoints(nfti *NFTInterface, tableFamily nftables.TableFamil
 	if err != nil {
 		return nil, err
 	}
-	rules := []nftableslib.Rule{
-		{
-			Action: loadbalanceAction,
-		},
+	rule := nftableslib.Rule{
+		Action: loadbalanceAction,
 	}
-	id, err := programChainRules(ci, chain, rules)
+	ri, err := ci.Chains().Chain(chain)
 	if err != nil {
 		return nil, fmt.Errorf("fail to program endpoints rules for service chain %s with error: %+v", chain, err)
 	}
+	if len(ruleID) == 0 {
+		// Since ruleID len is 0, it is the first time when the service has endpoints' rule programmed
+		id, err = ri.Rules().CreateImm(&rule)
+		if err != nil {
+			return nil, fmt.Errorf("fail to program endpoints rules for service chain %s with error: %+v", chain, err)
+		}
+	} else {
+		// Service has previously progrmmed endpoint rule, need to Insert a new rule and then delete the old one
+		id, err = ri.Rules().InsertImm(&rule, int(ruleID[0]))
+		if err != nil {
+			return nil, fmt.Errorf("fail to program endpoints rules for service chain %s with error: %+v", chain, err)
+		}
+		if err := ri.Rules().DeleteImm(ruleID[0]); err != nil {
+			klog.Errorf("failed to delete old endpoints rule for service chain %s with error: %+v", chain, err)
+		}
+	}
 
-	return id, nil
+	return []uint64{id}, nil
 }
