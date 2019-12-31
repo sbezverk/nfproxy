@@ -10,22 +10,22 @@ import (
 )
 
 const (
-	filterInput       = "nfproxy-filter-input"
-	filterOutput      = "nfproxy-filter-output"
-	filterForward     = "nfproxy-filter-forward"
-	k8sFilterFirewall = "k8s-nfproxy-filter-firewall"
-	k8sFilterServices = "k8s-nfproxy-filter-services"
-	k8sFilterForward  = "k8s-nfproxy-filter-forward"
-	k8sFilterDoReject = "k8s-nfproxy-filter-do-reject"
+	FilterInput       = "nfproxy-filter-input"
+	FilterOutput      = "nfproxy-filter-output"
+	FilterForward     = "nfproxy-filter-forward"
+	K8sFilterFirewall = "k8s-nfproxy-filter-firewall"
+	K8sFilterServices = "k8s-nfproxy-filter-services"
+	K8sFilterForward  = "k8s-nfproxy-filter-forward"
+	K8sFilterDoReject = "k8s-nfproxy-filter-do-reject"
 
-	natPrerouting     = "nfproxy-nat-preroutin"
-	natOutput         = "nfproxy-nat-output"
-	natPostrouting    = "nfproxy-nat-postrouting"
-	k8sNATMarkDrop    = "k8s-nfproxy-nat-mark-drop"
-	k8sNATMarkMasq    = "k8s-nfproxy-nat-mark-masq"
-	k8sNATServices    = "k8s-nfproxy-nat-services"
-	k8sNATNodeports   = "k8s-nfproxy-nat-nodeports"
-	k8sNATPostrouting = "k8s-nfproxy-nat-postrouting"
+	NatPrerouting     = "nfproxy-nat-preroutin"
+	NatOutput         = "nfproxy-nat-output"
+	NatPostrouting    = "nfproxy-nat-postrouting"
+	K8sNATMarkDrop    = "k8s-nfproxy-nat-mark-drop"
+	K8sNATMarkMasq    = "k8s-nfproxy-nat-mark-masq"
+	K8sNATServices    = "k8s-nfproxy-nat-services"
+	K8sNATNodeports   = "k8s-nfproxy-nat-nodeports"
+	K8sNATPostrouting = "k8s-nfproxy-nat-postrouting"
 
 	k8sNoEndpointsSet = "no-endpoints-services"
 )
@@ -55,7 +55,7 @@ func setupNFProxyChains(ci nftableslib.ChainsInterface) error {
 		attrs *nftableslib.ChainAttributes
 	}{
 		{
-			name: filterInput,
+			name: FilterInput,
 			attrs: &nftableslib.ChainAttributes{
 				Type:     nftables.ChainTypeFilter,
 				Priority: 0,
@@ -64,7 +64,7 @@ func setupNFProxyChains(ci nftableslib.ChainsInterface) error {
 			},
 		},
 		{
-			name: filterOutput,
+			name: FilterOutput,
 			attrs: &nftableslib.ChainAttributes{
 				Type:     nftables.ChainTypeFilter,
 				Priority: 0,
@@ -73,7 +73,7 @@ func setupNFProxyChains(ci nftableslib.ChainsInterface) error {
 			},
 		},
 		{
-			name: filterForward,
+			name: FilterForward,
 			attrs: &nftableslib.ChainAttributes{
 				Type:     nftables.ChainTypeFilter,
 				Priority: 0,
@@ -82,23 +82,23 @@ func setupNFProxyChains(ci nftableslib.ChainsInterface) error {
 			},
 		},
 		{
-			name:  k8sFilterFirewall,
+			name:  K8sFilterFirewall,
 			attrs: nil,
 		},
 		{
-			name:  k8sFilterServices,
+			name:  K8sFilterServices,
 			attrs: nil,
 		},
 		{
-			name:  k8sFilterForward,
+			name:  K8sFilterForward,
 			attrs: nil,
 		},
 		{
-			name:  k8sFilterDoReject,
+			name:  K8sFilterDoReject,
 			attrs: nil,
 		},
 		{
-			name: natPrerouting,
+			name: NatPrerouting,
 			attrs: &nftableslib.ChainAttributes{
 				Type:     nftables.ChainTypeNAT,
 				Priority: 0,
@@ -107,7 +107,7 @@ func setupNFProxyChains(ci nftableslib.ChainsInterface) error {
 			},
 		},
 		{
-			name: natOutput,
+			name: NatOutput,
 			attrs: &nftableslib.ChainAttributes{
 				Type:     nftables.ChainTypeNAT,
 				Priority: 0,
@@ -116,7 +116,7 @@ func setupNFProxyChains(ci nftableslib.ChainsInterface) error {
 			},
 		},
 		{
-			name: natPostrouting,
+			name: NatPostrouting,
 			attrs: &nftableslib.ChainAttributes{
 				Type:     nftables.ChainTypeNAT,
 				Priority: 0,
@@ -125,19 +125,19 @@ func setupNFProxyChains(ci nftableslib.ChainsInterface) error {
 			},
 		},
 		{
-			name:  k8sNATMarkDrop,
+			name:  K8sNATMarkDrop,
 			attrs: nil,
 		},
 		{
-			name:  k8sNATServices,
+			name:  K8sNATServices,
 			attrs: nil,
 		},
 		{
-			name:  k8sNATNodeports,
+			name:  K8sNATNodeports,
 			attrs: nil,
 		},
 		{
-			name:  k8sNATPostrouting,
+			name:  K8sNATPostrouting,
 			attrs: nil,
 		},
 	}
@@ -154,30 +154,30 @@ func setupInitialNATRules(ci nftableslib.ChainsInterface) error {
 	preroutingRules := []nftableslib.Rule{
 		{
 			// -A PREROUTING -m comment --comment "kubernetes service portals" -j KUBE-SERVICES
-			Action: setActionVerdict(unix.NFT_JUMP, k8sNATServices),
+			Action: setActionVerdict(unix.NFT_JUMP, K8sNATServices),
 		},
 	}
-	if _, err := programChainRules(ci, natPrerouting, preroutingRules); err != nil {
+	if _, err := programChainRules(ci, NatPrerouting, preroutingRules); err != nil {
 		return err
 	}
 
 	outputRules := []nftableslib.Rule{
 		{
 			// -A OUTPUT -m comment --comment "kubernetes service portals" -j KUBE-SERVICES
-			Action: setActionVerdict(unix.NFT_JUMP, k8sNATServices),
+			Action: setActionVerdict(unix.NFT_JUMP, K8sNATServices),
 		},
 	}
-	if _, err := programChainRules(ci, natOutput, outputRules); err != nil {
+	if _, err := programChainRules(ci, NatOutput, outputRules); err != nil {
 		return err
 	}
 
 	postroutingRules := []nftableslib.Rule{
 		{
 			// -A POSTROUTING -m comment --comment "kubernetes postrouting rules" -j KUBE-POSTROUTING
-			Action: setActionVerdict(unix.NFT_JUMP, k8sNATPostrouting),
+			Action: setActionVerdict(unix.NFT_JUMP, K8sNATPostrouting),
 		},
 	}
-	if _, err := programChainRules(ci, natPostrouting, postroutingRules); err != nil {
+	if _, err := programChainRules(ci, NatPostrouting, postroutingRules); err != nil {
 		return err
 	}
 
@@ -192,7 +192,7 @@ func setupInitialNATRules(ci nftableslib.ChainsInterface) error {
 			},
 		},
 	}
-	if _, err := programChainRules(ci, k8sNATMarkDrop, markDropRules); err != nil {
+	if _, err := programChainRules(ci, K8sNATMarkDrop, markDropRules); err != nil {
 		return err
 	}
 
@@ -209,7 +209,7 @@ func setupInitialNATRules(ci nftableslib.ChainsInterface) error {
 			Action: masqAction,
 		},
 	}
-	if _, err := programChainRules(ci, k8sNATPostrouting, k8sPostroutingRules); err != nil {
+	if _, err := programChainRules(ci, K8sNATPostrouting, k8sPostroutingRules); err != nil {
 		return err
 	}
 
@@ -226,22 +226,22 @@ func setupInitialFilterRules(ci nftableslib.ChainsInterface, clusterCIDR string)
 					Value: binaryutil.BigEndian.PutUint32(nftableslib.CTStateNew),
 				},
 			},
-			Action: setActionVerdict(unix.NFT_JUMP, k8sFilterServices),
+			Action: setActionVerdict(unix.NFT_JUMP, K8sFilterServices),
 		},
 		{
 			// -A INPUT -j KUBE-FIREWALL
-			Action: setActionVerdict(unix.NFT_JUMP, k8sFilterFirewall),
+			Action: setActionVerdict(unix.NFT_JUMP, K8sFilterFirewall),
 		},
 	}
 	// Programming rules for Filter Chain Input hook
-	if _, err := programChainRules(ci, filterInput, inputRules); err != nil {
+	if _, err := programChainRules(ci, FilterInput, inputRules); err != nil {
 		return err
 	}
 
 	forwardRules := []nftableslib.Rule{
 		{
 			// -A FORWARD -m comment --comment "kubernetes forwarding rules" -j KUBE-FORWARD
-			Action: setActionVerdict(unix.NFT_JUMP, k8sFilterForward),
+			Action: setActionVerdict(unix.NFT_JUMP, K8sFilterForward),
 		},
 		{
 			// -A FORWARD -m conntrack --ctstate NEW -m comment --comment "kubernetes service portals" -j KUBE-SERVICES
@@ -251,11 +251,11 @@ func setupInitialFilterRules(ci nftableslib.ChainsInterface, clusterCIDR string)
 					Value: binaryutil.BigEndian.PutUint32(nftableslib.CTStateNew),
 				},
 			},
-			Action: setActionVerdict(unix.NFT_JUMP, k8sFilterServices),
+			Action: setActionVerdict(unix.NFT_JUMP, K8sFilterServices),
 		},
 	}
 	// Programming rules for Filter Chain Forward hook
-	if _, err := programChainRules(ci, filterForward, forwardRules); err != nil {
+	if _, err := programChainRules(ci, FilterForward, forwardRules); err != nil {
 		return err
 	}
 
@@ -268,15 +268,15 @@ func setupInitialFilterRules(ci nftableslib.ChainsInterface, clusterCIDR string)
 					Value: binaryutil.BigEndian.PutUint32(nftableslib.CTStateNew),
 				},
 			},
-			Action: setActionVerdict(unix.NFT_JUMP, k8sFilterServices),
+			Action: setActionVerdict(unix.NFT_JUMP, K8sFilterServices),
 		},
 		{
 			// -A OUTPUT -j KUBE-FIREWALL
-			Action: setActionVerdict(unix.NFT_JUMP, k8sFilterFirewall),
+			Action: setActionVerdict(unix.NFT_JUMP, K8sFilterFirewall),
 		},
 	}
 	// Programming rules for Filter Chain Output hook
-	if _, err := programChainRules(ci, filterOutput, outputRules); err != nil {
+	if _, err := programChainRules(ci, FilterOutput, outputRules); err != nil {
 		return err
 	}
 
@@ -293,7 +293,7 @@ func setupInitialFilterRules(ci nftableslib.ChainsInterface, clusterCIDR string)
 		},
 	}
 	// Programming rules for Filter Chain Firewall hook
-	if _, err := programChainRules(ci, k8sFilterFirewall, firewallRules); err != nil {
+	if _, err := programChainRules(ci, K8sFilterFirewall, firewallRules); err != nil {
 		return err
 	}
 
@@ -350,7 +350,7 @@ func setupInitialFilterRules(ci nftableslib.ChainsInterface, clusterCIDR string)
 		},
 	}
 	// Programming rules for Filter Chain Firewall hook
-	if _, err := programChainRules(ci, k8sFilterForward, k8sForwardRules); err != nil {
+	if _, err := programChainRules(ci, K8sFilterForward, k8sForwardRules); err != nil {
 		return err
 	}
 
@@ -361,14 +361,14 @@ func setupInitialFilterRules(ci nftableslib.ChainsInterface, clusterCIDR string)
 		},
 	}
 	// Programming rules for Filter Chain Firewall hook
-	if _, err := programChainRules(ci, k8sFilterDoReject, k8sRejectRules); err != nil {
+	if _, err := programChainRules(ci, K8sFilterDoReject, k8sRejectRules); err != nil {
 		return err
 	}
 
 	return nil
 }
 
-func setupk8sFilterRules(si nftableslib.SetsInterface, ci nftableslib.ChainsInterface, ipv6 bool) error {
+func setupK8sFilterRules(si nftableslib.SetsInterface, ci nftableslib.ChainsInterface, ipv6 bool) error {
 	var dataType nftables.SetDatatype
 	dataType = nftables.TypeIPAddr
 	if ipv6 {
@@ -409,7 +409,7 @@ func setupk8sFilterRules(si nftableslib.SetsInterface, ci nftableslib.ChainsInte
 			},
 		},
 	}
-	if _, err := programChainRules(ci, k8sFilterServices, servicesRules); err != nil {
+	if _, err := programChainRules(ci, K8sFilterServices, servicesRules); err != nil {
 		return err
 	}
 
@@ -438,7 +438,7 @@ func programCommonChainsRules(nfti *NFTInterface, clusterCIDRIPv4, clusterCIDRIP
 			if err := setupInitialFilterRules(ci, clusterCIDR); err != nil {
 				return err
 			}
-			if err := setupk8sFilterRules(si, ci, ipv6); err != nil {
+			if err := setupK8sFilterRules(si, ci, ipv6); err != nil {
 				return err
 			}
 			if err := setupInitialNATRules(ci); err != nil {

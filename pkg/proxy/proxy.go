@@ -76,10 +76,10 @@ func (p *proxy) AddService(svc *v1.Service) {
 func (p *proxy) addService(svcPortName ServicePortName, servicePort *v1.ServicePort, svc *v1.Service, baseSvcInfo *BaseServiceInfo) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	klog.Infof("addService for a service port name: %s protocol: %s address: %s port: %d",
-		svcPortName.String(), baseSvcInfo.Protocol(), baseSvcInfo.ClusterIP(), baseSvcInfo.Port())
-	_, ok := p.serviceMap[svcPortName]
-	if ok {
+	//	klog.Infof("addService for a service port name: %s protocol: %s address: %s port: %d",
+	//		svcPortName.String(), baseSvcInfo.Protocol(), baseSvcInfo.ClusterIP(), baseSvcInfo.Port())
+
+	if _, ok := p.serviceMap[svcPortName]; ok {
 		klog.Warningf("Service port name %+v already exists", svcPortName)
 		return
 	}
@@ -96,19 +96,46 @@ func (p *proxy) addService(svcPortName ServicePortName, servicePort *v1.ServiceP
 	if err := nftables.AddServiceChain(p.nfti, tableFamily, cn); err != nil {
 		klog.Errorf("failed to add service chain %s for service %s with error: %+v", cn, svcPortName.String(), err)
 	}
-
+	// Programming Service's cluster ip
+	if clip := baseSvcInfo.ClusterIP(); clip != nil {
+		klog.Infof("Service: %s cluster ip: %s", svcPortName.String(), clip.String())
+		id, err := nftables.ProgramServiceClusterIP(p.nfti, tableFamily, cn, clip.String(), baseSvcInfo.Protocol(), baseSvcInfo.Port())
+		if err != nil {
+			klog.Errorf("Failed to program Service %s cluster IP rule with error: %+v", svcPortName.String(), err)
+		}
+		baseSvcInfo.svcnft.Chains[tableFamily].Chain[nftables.K8sNATServices].RuleID = id
+	}
+	// Programming Service's node port
+	if np := baseSvcInfo.NodePort(); np != 0 {
+		klog.Infof("Service: %s node port: %d", svcPortName.String(), np)
+	}
+	// Programming Service's external ips
+	if extip := baseSvcInfo.ExternalIPStrings(); len(extip) != 0 {
+		klog.Infof("Service: %s external ip: %+v", svcPortName.String(), extip)
+		id, err := nftables.ProgramServiceExternalIP(p.nfti, tableFamily, cn, extip, baseSvcInfo.Protocol(), baseSvcInfo.Port())
+		if err != nil {
+			klog.Errorf("Failed to program Service %s cluster IP rule with error: %+v", svcPortName.String(), err)
+		}
+		// Appending rules' IDs generated for Service's external IPs
+		baseSvcInfo.svcnft.Chains[tableFamily].Chain[nftables.K8sNATServices].RuleID = append(baseSvcInfo.svcnft.Chains[tableFamily].Chain[nftables.K8sNATServices].RuleID, id...)
+	}
+	// Programming Service's loadbalancer ips
+	if lbip := baseSvcInfo.LoadBalancerIPStrings(); len(lbip) != 0 {
+		klog.Infof("Service: %s loadbalancer ip: %+v", svcPortName.String(), lbip)
+	}
 	// If svcPortName does not have entry in the map, it will return nil and len of nil would be 0
 	if len(p.endpointsMap[svcPortName]) == 0 {
-		klog.Infof("service port name: %s does not have endpoints", svcPortName.String())
+		//		klog.Infof("service port name: %s does not have endpoints", svcPortName.String())
 		if err := nftables.AddToNoEndpointsList(p.nfti, tableFamily, string(servicePort.Protocol), svc.Spec.ClusterIP, uint16(servicePort.Port)); err != nil {
 			klog.Errorf("failed to add %s to No Endpoints Set with error: %+v", svcPortName.String(), err)
-		} else {
-			klog.Infof("succeeded to add %s to No Endpoints Set", svcPortName.String())
 		}
+		// else {
+		// klog.Infof("succeeded to add %s to No Endpoints Set", svcPortName.String())
+		// }
 	}
-	// All services chains/rules are ready, safe to add svcPortName th serviceMao
+	// All services chains/rules are ready, safe to add svcPortName th serviceMap
 	p.serviceMap[svcPortName] = newServiceInfo(servicePort, svc, baseSvcInfo)
-	klog.Infof("finished add service processing: %s", svcPortName.String())
+	//	klog.Infof("finished add service processing: %s", svcPortName.String())
 
 	printSvcPortEntry(svcPortName, p.serviceMap)
 }
@@ -136,40 +163,42 @@ func (p *proxy) DeleteService(svc *v1.Service) {
 	for i := range svc.Spec.Ports {
 		servicePort := &svc.Spec.Ports[i]
 		svcPortName := getSvcPortName(svc.Name, svc.Namespace, servicePort.Name, servicePort.Protocol)
-		baseSvcInfo := newBaseServiceInfo(servicePort, svc)
-		p.deleteService(svcPortName, servicePort, svc, baseSvcInfo)
+		p.deleteService(svcPortName, servicePort, svc)
 	}
 }
 
-func (p *proxy) deleteService(svcPortName ServicePortName, servicePort *v1.ServicePort, svc *v1.Service, baseSvcInfo *BaseServiceInfo) {
+func (p *proxy) deleteService(svcPortName ServicePortName, servicePort *v1.ServicePort, svc *v1.Service) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	klog.Infof("deleteService for a service port name: %s protocol: %s address: %s port: %d",
-		svcPortName.String(), string(svcPortName.Protocol), baseSvcInfo.ClusterIP().String(), servicePort.Port)
-	_, tableFamily := getIPFamily(baseSvcInfo.ClusterIP().String())
 	svcInfo, ok := p.serviceMap[svcPortName]
 	if !ok {
 		klog.Warningf("Service port name %+v does not exist", svcPortName)
 		return
 	}
-
 	baseInfo, _ := svcInfo.(*serviceInfo)
-	// TODO removing Service's chains and then remove svcPortName from map
+	klog.Infof("deleteService for a service port name: %s protocol: %s address: %s port: %d",
+		svcPortName.String(), string(svcPortName.Protocol), baseInfo.ClusterIP().String(), servicePort.Port)
+	_, tableFamily := getIPFamily(baseInfo.ClusterIP().String())
+
 	if !baseInfo.svcnft.WithEndpoints {
 		// svcPortName does not have any endpoints, need to remove service entry from "No endpointd Set"
-		klog.Infof("Attempting to remove %s:%d from \"No Endpoints Set\"", baseInfo.ClusterIP().String(), servicePort.Port)
+		//	klog.Infof("Attempting to remove %s:%d from \"No Endpoints Set\"", baseInfo.ClusterIP().String(), servicePort.Port)
 		if err := nftables.RemoveFromNoEndpointsList(p.nfti, tableFamily, string(svcPortName.Protocol), baseInfo.ClusterIP().String(), uint16(servicePort.Port)); err != nil {
 			klog.Errorf("failed to remove %s from \"No Endpoints Set\" with error: %+v", svcPortName.String(), err)
 		}
 	}
 	// Remove svcPortName related chains and rules
-	// scn := baseSvcInfo.svcnft.Chains[tableFamily].Service
+	scn := baseInfo.svcnft.Chains[tableFamily].Service
 	for chain, rules := range baseInfo.svcnft.Chains[tableFamily].Chain {
-		if err := nftables.DeleteServiceRules(p.nfti, tableFamily, chain, rules.RuleID); err != nil {
-			klog.Errorf("failed to delete rules chain: %s service port name: %s", chain, svcPortName.String())
+		if len(rules.RuleID) != 0 {
+			if err := nftables.DeleteServiceRules(p.nfti, tableFamily, chain, rules.RuleID); err != nil {
+				klog.Errorf("failed to delete rules chain: %s service port name: %s with error: %+v", chain, svcPortName.String(), err)
+			}
 		}
 	}
-	printSvcPortEntry(svcPortName, p.serviceMap)
+	if err := nftables.DeleteChain(p.nfti, tableFamily, scn); err != nil {
+		klog.Errorf("failed to delete service chain: %s service port name: %s with error: %+v", scn, svcPortName.String(), err)
+	}
 
 	// Delete svcPortName from known svcPortName map
 	delete(p.serviceMap, svcPortName)
@@ -205,19 +234,19 @@ func (p *proxy) addEndpoint(svcPortName ServicePortName, addr *v1.EndpointAddres
 	if err := p.addEndpointRule(&epRule, ipTableFamily, cn, svcPortName, &epKey{port.Protocol, addr.IP, port.Port}); err != nil {
 		return err
 	}
-	klog.Infof("nfproxy: addEndpointRule suceeded for %+v", epKey{port.Protocol, addr.IP, port.Port})
+	//	klog.Infof("nfproxy: addEndpointRule suceeded for %+v", epKey{port.Protocol, addr.IP, port.Port})
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.endpointsMap[svcPortName] = append(p.endpointsMap[svcPortName], newEndpointInfo(baseEndpointInfo, port.Protocol))
 	if err := p.UpdateServiceChain(svcPortName, ipTableFamily); err != nil {
-		klog.Infof("failed to update service %s chain with endpoint rule with error: %+v", svcPortName.String(), err)
+		klog.Errorf("failed to update service %s chain with endpoint rule with error: %+v", svcPortName.String(), err)
 		return err
 	}
 	return nil
 }
 
 func (p *proxy) addEndpointRule(epRule *nftables.Rule, tableFamily utilnftables.TableFamily, cn string, svcPortName ServicePortName, key *epKey) error {
-	klog.Infof("nfproxy: addEndpointRule attempt to program rules for %+v", *key)
+	//	klog.Infof("nfproxy: addEndpointRule attempt to program rules for %+v", *key)
 	var ruleIDs []uint64
 	var err error
 
@@ -239,17 +268,13 @@ func (p *proxy) UpdateServiceChain(svcPortName ServicePortName, tableFamily util
 	if ok {
 		entry := svc.(*serviceInfo)
 		if !entry.svcnft.WithEndpoints {
-			klog.Infof("Service %s now has an endpoint, removing it from no-endpoints-set", svcPortName.String())
 			// Service did not have any endpoints until now
-			// klog.Infof("Attempting to remove %s:%d from \"No Endpoints Set\"", svc.ClusterIP().String(), svc.Port())
 			if err := nftables.RemoveFromNoEndpointsList(p.nfti, tableFamily, string(svcPortName.Protocol), svc.ClusterIP().String(), uint16(svc.Port())); err != nil {
 				klog.Errorf("failed to remove %s from \"No Endpoints Set\" with error: %+v", svcPortName.String(), err)
 			} else {
 				entry.svcnft.WithEndpoints = true
 			}
-		} // else {
-		//	klog.Infof("service port name: %s has already %d endpoints", svcPortName.String(), len(p.endpointsMap[svcPortName]))
-		//}
+		}
 		// Programming rules for existing endpoints
 		epsChains := p.getServicePortEndpointChains(svcPortName, tableFamily)
 		cn := entry.svcnft.Chains[tableFamily].Service
@@ -264,13 +289,13 @@ func (p *proxy) UpdateServiceChain(svcPortName ServicePortName, tableFamily util
 			// Storing Service's rule id so it can be used later for modification or deletion.
 			// cn carries service's name of chain, a connecion point with endpoints backending the service.
 			svcRules.RuleID = rules
-			klog.Infof("programmed %d endpoints rules for service %s", len(rules), svcPortName.String())
 		} else {
 			// Service has no endpoints left needs to remove the rule if any
 			if err := nftables.DeleteServiceRules(p.nfti, tableFamily, cn, svcRules.RuleID); err != nil {
 				klog.Errorf("failed to remove rule for service %s with error: %+v", svcPortName.String(), err)
 				return err
 			}
+			svcRules.RuleID = svcRules.RuleID[:0]
 		}
 	}
 
@@ -286,16 +311,13 @@ func (p *proxy) deleteEndpoint(svcPortName ServicePortName, addr *v1.EndpointAdd
 	isLocal := addr.NodeName != nil && *addr.NodeName == p.hostname
 	ipFamily, ipTableFamily := getIPFamily(addr.IP)
 	ep2d := newBaseEndpointInfo(ipFamily, port.Protocol, addr.IP, int(port.Port), isLocal, nil)
-	//				klog.Infof("To delete endpoint: %s", ep2d.Endpoint)
 	for i, ep := range eps {
 		ep2c, ok := ep.(*endpointsInfo)
 		if !ok {
 			// Not recognize, skipping it
 			continue
 		}
-		//					klog.Infof("Existing endpoint: %s", ep2c.BaseEndpointInfo.Endpoint)
 		if ep2c.Equal(ep2d) {
-			//						klog.Infof("Found match to delete: %s existing: %s", ep2d.Endpoint, ep2c.BaseEndpointInfo.Endpoint)
 			// Update eps by removing endpoint entry for port.Protocol, addr.IP, port.Port
 			p.mu.Lock()
 			p.endpointsMap[svcPortName] = eps[:i]
@@ -311,31 +333,33 @@ func (p *proxy) deleteEndpoint(svcPortName ServicePortName, addr *v1.EndpointAdd
 }
 
 func (p *proxy) deleteEndpointRules(ipTableFamily utilnftables.TableFamily, cn string, ruleID []uint64, svcPortName ServicePortName, key *epKey) error {
-	klog.Infof("nfproxy: addEndpointRule attempt to program rules for %+v", *key)
-
-	err := nftables.DeleteEndpointRules(p.nfti, ipTableFamily, cn, ruleID)
-	if err != nil {
-		return err
-	}
-	p.mu.Lock()
-	defer p.mu.Unlock()
+	// klog.Infof("nfproxy: deleteEndpointRulese attempt to delete rules for endpoint chain: %s", cn)
 	// Right away update the service's rule to exclude deleted endpoint
 	if err := p.UpdateServiceChain(svcPortName, ipTableFamily); err != nil {
 		klog.Infof("failed to update service %s chain with endpoint rule with error: %+v", svcPortName.String(), err)
 		return err
 	}
+	if err := nftables.DeleteEndpointRules(p.nfti, ipTableFamily, cn, ruleID); err != nil {
+		return err
+	}
+	// Deleting endpoint's chain
+	if err := nftables.DeleteChain(p.nfti, ipTableFamily, cn); err != nil {
+		klog.Errorf("failed to delete endpoint chain: %s with error: %+v", cn, err)
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
 	// Check if it was last endpoint for a service port name
 	if len(p.endpointsMap[svcPortName]) == 0 {
 		klog.Infof("no more endpoints found for %s", svcPortName.String())
 		// No endpoints for svcPortName key is available, need to add svcPortName to No Endpoint Set
 		svc, ok := p.serviceMap[svcPortName]
 		if ok {
-			klog.Infof("Attempting to add %s to No Endpoints Set", svcPortName.String())
+			// klog.Infof("Attempting to add %s to No Endpoints Set", svcPortName.String())
 			_, tableFamily := getIPFamily(svc.ClusterIP().String())
 			if err := nftables.AddToNoEndpointsList(p.nfti, tableFamily, string(svcPortName.Protocol), svc.ClusterIP().String(), uint16(svc.Port())); err != nil {
 				klog.Errorf("failed to add %s to No Endpoints Set with error: %+v", svcPortName.String(), err)
 			} else {
-				klog.Infof("succeeded to add %s to No Endpoints Set", svcPortName.String())
+				// klog.Infof("succeeded to add %s to No Endpoints Set", svcPortName.String())
 				// Set service flag that there is no endpoints
 				bsvc := svc.(*serviceInfo)
 				bsvc.svcnft.WithEndpoints = false
@@ -347,6 +371,11 @@ func (p *proxy) deleteEndpointRules(ipTableFamily utilnftables.TableFamily, cn s
 }
 
 func (p *proxy) UpdateEndpoints(epOld, epNew *v1.Endpoints) {
+	if epNew.Namespace == "" && epNew.Name == "" {
+		// When service gets deleted the endpoint controller triggers an update for an endpoint with no name or namespace
+		// ignoring it
+		return
+	}
 	klog.Infof("Update endpoint: %s/%s", epNew.Namespace, epNew.Name)
 	if !reflect.DeepEqual(epOld.Subsets, epNew.Subsets) {
 		// First check if any new endpoint rules needs to be added
@@ -367,9 +396,8 @@ func (p *proxy) UpdateEndpoints(epOld, epNew *v1.Endpoints) {
 					}
 					if !isPortInSubset(epOld.Subsets, port) {
 						if err := p.addEndpoint(svcPortName, addr, port); err != nil {
-							klog.Infof("Update endpoint: %s/%s failed with error: %+v", epNew.Namespace, epNew.Name, err)
+							klog.Errorf("Update endpoint: %s/%s failed with error: %+v", epNew.Namespace, epNew.Name, err)
 						}
-						printSvcPortEntry(svcPortName, p.serviceMap)
 					}
 				}
 			}
@@ -404,7 +432,7 @@ func (p *proxy) UpdateEndpoints(epOld, epNew *v1.Endpoints) {
 			}
 		}
 	}
-	klog.Infof("Finished processing update endpoint: %s/%s", epNew.Namespace, epNew.Name)
+	//	klog.Infof("Finished processing update endpoint: %s/%s", epNew.Namespace, epNew.Name)
 }
 
 func getSvcPortName(name, namespace string, portName string, protocol v1.Protocol) ServicePortName {
