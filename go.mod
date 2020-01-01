@@ -3,8 +3,8 @@ module github.com/sbezverk/nfproxy
 go 1.13
 
 require (
-	github.com/google/nftables v0.0.0-20191222104511-2228941ec587
-	github.com/sbezverk/nftableslib v0.0.0-20191222144842-85b361b2414c
+	github.com/google/nftables v0.0.0-20200101160555-80a905063cf2
+	github.com/sbezverk/nftableslib v0.0.0-20200101170808-495936676140
 	golang.org/x/sys v0.0.0-20191220220014-0732a990476f
 	k8s.io/api v0.0.0
 	k8s.io/apimachinery v0.0.0

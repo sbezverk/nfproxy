@@ -165,6 +165,8 @@ github.com/google/nftables v0.0.0-20190906062827-5d14089d2edc/go.mod h1:DfTD7lq9
 github.com/google/nftables v0.0.0-20191217230200-756cfa14a85e/go.mod h1:cfspEyr/Ap+JDIITA+N9a0ernqG0qZ4W1aqMRgDZa1g=
 github.com/google/nftables v0.0.0-20191222104511-2228941ec587 h1:qohV/0PH9aJE89ke/dDpwXWmh+3o+FqEZR0DtcqsoxI=
 github.com/google/nftables v0.0.0-20191222104511-2228941ec587/go.mod h1:cfspEyr/Ap+JDIITA+N9a0ernqG0qZ4W1aqMRgDZa1g=
+github.com/google/nftables v0.0.0-20200101160555-80a905063cf2 h1:jPvrQZo4JbwVtHdw8r2tVA868MLy/F7sO8oF7wWJOu0=
+github.com/google/nftables v0.0.0-20200101160555-80a905063cf2/go.mod h1:cfspEyr/Ap+JDIITA+N9a0ernqG0qZ4W1aqMRgDZa1g=
 github.com/google/pprof v0.0.0-20181206194817-3ea8567a2e57/go.mod h1:zfwlbNMJ+OItoe0UupaVj+oy1omPYYDuagoSzA8v9mc=
 github.com/google/renameio v0.1.0/go.mod h1:KWCgfxg9yswjAJkECMjeO8J8rahYeXnNhOm40UhjYkI=
 github.com/google/uuid v1.1.1 h1:Gkbcsh/GbpXz7lPftLA3P6TYMwjCLYm83jiFQZF/3gY=
@@ -276,6 +278,7 @@ github.com/opencontainers/selinux v1.3.1-0.20190929122143-5215b1806f52/go.mod h1
 github.com/pelletier/go-toml v1.2.0/go.mod h1:5z9KED0ma1S8pY6P1sdut58dfprrGBbd/94hg7ilaic=
 github.com/peterbourgon/diskv v2.0.1+incompatible/go.mod h1:uqqh8zWWbv1HBMNONnaR/tNboyR3/BZd58JJSHlUSCU=
 github.com/pkg/errors v0.8.1/go.mod h1:bwawxfHBFNV+L2hUp1rHADufV3IMtnDRdf1r5NINEl0=
+github.com/pmezard/go-difflib v1.0.0 h1:4DBwDE0NGyQoBHbLQYPwSUPoCMWR5BEzIk/f1lZbAQM=
 github.com/pmezard/go-difflib v1.0.0/go.mod h1:iKH77koFhYxTK1pcRnkKkqfTogsbg7gZNVY4sRDYZ/4=
 github.com/pquerna/cachecontrol v0.0.0-20171018203845-0dec1b30a021/go.mod h1:prYjPmNq4d1NPVmpShWobRqXY3q7Vp+80DqgxxUrUIA=
 github.com/pquerna/ffjson v0.0.0-20180717144149-af8b230fcd20/go.mod h1:YARuvh7BUWHNhzDq2OM5tzR2RiCcN2D7sapiKyCel/M=
@@ -302,6 +305,8 @@ github.com/sbezverk/nftableslib v0.0.0-20191219193548-1f3b8a8229bc h1:5Kct2qku3G
 github.com/sbezverk/nftableslib v0.0.0-20191219193548-1f3b8a8229bc/go.mod h1:Y6Z/MPZOtzHsadhmZV2ZGMnzgJ7fAQHKMhg6RaW9Fdg=
 github.com/sbezverk/nftableslib v0.0.0-20191222144842-85b361b2414c h1:vU/MY1Uc22F9L0Sk8ufxqYQ0ZaaRO4qex1eexuIi6zg=
 github.com/sbezverk/nftableslib v0.0.0-20191222144842-85b361b2414c/go.mod h1:38PSvH10WkYPBa399jScQ+JA55E9uXzJ/cJnsKdYozA=
+github.com/sbezverk/nftableslib v0.0.0-20200101170808-495936676140 h1:po++7sjZfCsQmDJ+jP/uwtC3bvvbd9m24y22XEXtXuw=
+github.com/sbezverk/nftableslib v0.0.0-20200101170808-495936676140/go.mod h1:43B0iHiyXSEJFNI5xbcu45LRUVVsz01D4Xe7VPcJTdo=
 github.com/sbezverk/nftableslib/e2e/setenv v0.0.0-20191009154549-4fe065fe4e96/go.mod h1:eg/8FSK3bdB2DJRB5Cs8oIXtqYtF/KbMRwyuaZ13SG4=
 github.com/sbezverk/nftableslib/e2e/setenv v0.0.0-20191010164456-029e0d78cdb1/go.mod h1:Q7cQRSoGvFdscKripABhD9LwzMPI7nyH/W19KStrNEE=
 github.com/seccomp/libseccomp-golang v0.9.1/go.mod h1:GbW5+tmTXfcxTToHLXlScSlAvWlF4P2Ca7zGrPiEpWo=
@@ -324,6 +329,7 @@ github.com/spf13/pflag v1.0.5/go.mod h1:McXfInJRrz4CZXVZOBLb0bTZqETkiAhM9Iw0y3An
 github.com/spf13/viper v1.3.2/go.mod h1:ZiWeW+zYFKm7srdB9IoDzzZXaJaI5eL9QjNiN/DMA2s=
 github.com/storageos/go-api v0.0.0-20180912212459-343b3eff91fc/go.mod h1:ZrLn+e0ZuF3Y65PNF6dIwbJPZqfmtCXxFm9ckv0agOY=
 github.com/stretchr/objx v0.2.0/go.mod h1:qt09Ya8vawLte6SNmTgCsAVtYtaKzEcn8ATUoHMkEqE=
+github.com/stretchr/testify v1.4.0 h1:2E4SXV/wtOkTonXsotYi4li6zVWxYlZuYNCXe9XRJyk=
 github.com/stretchr/testify v1.4.0/go.mod h1:j7eGeouHqKxXV5pUuKE4zz7dFj8WfuZ+81PSLYec5m4=
 github.com/syndtr/gocapability v0.0.0-20180916011248-d98352740cb2/go.mod h1:hkRG7XYTFWNJGYcbNJQlaLq0fg1yr4J4t/NcTQtrfww=
 github.com/tarm/serial v0.0.0-20180830185346-98f6abe2eb07/go.mod h1:kDXzergiv9cbyO7IOYJZWg1U88JhDg3PB6klq9Hg2pA=
