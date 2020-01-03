@@ -121,8 +121,6 @@ func (p *proxy) removeFromNoEndpointsList(servicePort ServicePort, tableFamily u
 func (p *proxy) addService(svcPortName ServicePortName, servicePort *v1.ServicePort, svc *v1.Service, baseSvcInfo *BaseServiceInfo) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	//	klog.Infof("addService for a service port name: %s protocol: %s address: %s port: %d",
-	//		svcPortName.String(), baseSvcInfo.Protocol(), baseSvcInfo.ClusterIP(), baseSvcInfo.Port())
 
 	if _, ok := p.serviceMap[svcPortName]; ok {
 		klog.Warningf("Service port name %+v already exists", svcPortName)
@@ -137,7 +135,10 @@ func (p *proxy) addService(svcPortName ServicePortName, servicePort *v1.ServiceP
 	baseSvcInfo.svcnft.Interface = p.nfti
 	baseSvcInfo.svcnft.Chains = nftables.GetSvcChain(tableFamily, cn)
 	baseSvcInfo.svcnft.WithEndpoints = false
-	// Programming Service's chain
+	// Programming Service Port's chains
+	// To preserve the order of different type of rules (ClusterIP, External, Loadbalancing) for the same Service Port,
+	// lastSvcRulePosition carries a position where the next rule should be positioned.
+	lastSvcRulePosition := 0
 	if err := nftables.AddServiceChain(p.nfti, tableFamily, cn); err != nil {
 		klog.Errorf("failed to add service chain %s for service %s with error: %+v", cn, svcPortName.String(), err)
 	}
@@ -146,38 +147,40 @@ func (p *proxy) addService(svcPortName ServicePortName, servicePort *v1.ServiceP
 		id, err := nftables.ProgramServiceClusterIP(p.nfti, tableFamily, cn, clip.String(), baseSvcInfo.Protocol(), baseSvcInfo.Port())
 		if err != nil {
 			klog.Errorf("Failed to program Service %s cluster IP rule with error: %+v", svcPortName.String(), err)
+			return
 		}
 		baseSvcInfo.svcnft.Chains[tableFamily].Chain[nftables.K8sNATServices].RuleID = id
+		lastSvcRulePosition = int(id[len(id)-1])
 	}
 	// Programming Service's node port
 	if np := baseSvcInfo.NodePort(); np != 0 {
 		id, err := nftables.ProgramServiceNodePort(p.nfti, tableFamily, cn, baseSvcInfo.Protocol(), np)
 		if err != nil {
 			klog.Errorf("Failed to program Service %s Nodeport rule with error: %+v", svcPortName.String(), err)
+			return
 		}
 		// Appending rules' IDs generated for Service's Nodeport
 		baseSvcInfo.svcnft.Chains[tableFamily].Chain[nftables.K8sNATNodeports].RuleID = id
 	}
 	// Programming Service's external ips, external IPs rules are appended right after Cluster IP rules
 	if extip := baseSvcInfo.ExternalIPStrings(); len(extip) != 0 {
-		// Position parameter is always a last rule ID
-		ruleIDs := baseSvcInfo.svcnft.Chains[tableFamily].Chain[nftables.K8sNATServices].RuleID
-		lastRulePosition := int(ruleIDs[len(ruleIDs)-1])
-		id, err := nftables.ProgramServiceExternalIP(p.nfti, tableFamily, cn, extip, baseSvcInfo.Protocol(), baseSvcInfo.Port(), lastRulePosition)
+		// Position parameter is always a last programmed rule ID
+		id, err := nftables.ProgramServiceExternalIP(p.nfti, tableFamily, cn, extip, baseSvcInfo.Protocol(), baseSvcInfo.Port(), lastSvcRulePosition)
 		if err != nil {
 			klog.Errorf("Failed to program Service %s external IPs rule with error: %+v", svcPortName.String(), err)
+			return
 		}
 		// Appending rules' IDs generated for Service's external IPs
 		baseSvcInfo.svcnft.Chains[tableFamily].Chain[nftables.K8sNATServices].RuleID = append(baseSvcInfo.svcnft.Chains[tableFamily].Chain[nftables.K8sNATServices].RuleID, id...)
+		lastSvcRulePosition = int(id[len(id)-1])
 	}
 	// Programming Service's loadbalancer ips
 	if lbip := baseSvcInfo.LoadBalancerIPStrings(); len(lbip) != 0 {
-		// Position parameter is always a last rule ID
-		ruleIDs := baseSvcInfo.svcnft.Chains[tableFamily].Chain[nftables.K8sNATServices].RuleID
-		lastRulePosition := int(ruleIDs[len(ruleIDs)-1])
-		id, err := nftables.ProgramServiceLoadBalancerIP(p.nfti, tableFamily, cn, lbip, baseSvcInfo.Protocol(), baseSvcInfo.Port(), lastRulePosition)
+		// Position parameter is always a last programmed rule ID
+		id, err := nftables.ProgramServiceLoadBalancerIP(p.nfti, tableFamily, cn, lbip, baseSvcInfo.Protocol(), baseSvcInfo.Port(), lastSvcRulePosition)
 		if err != nil {
 			klog.Errorf("Failed to program Service %s loadbalancer IP rule with error: %+v", svcPortName.String(), err)
+			return
 		}
 		// Appending rules' IDs generated for Service's Loadbalancer IPs
 		baseSvcInfo.svcnft.Chains[tableFamily].Chain[nftables.K8sNATServices].RuleID = append(baseSvcInfo.svcnft.Chains[tableFamily].Chain[nftables.K8sNATServices].RuleID, id...)
@@ -186,11 +189,11 @@ func (p *proxy) addService(svcPortName ServicePortName, servicePort *v1.ServiceP
 	if len(p.endpointsMap[svcPortName]) == 0 {
 		if err := p.addToNoEndpointsList(baseSvcInfo, tableFamily); err != nil {
 			klog.Errorf("failed to add %s to No Endpoints Set with error: %+v", svcPortName.String(), err)
+			return
 		}
 	}
 	// All services chains/rules are ready, safe to add svcPortName th serviceMap
 	p.serviceMap[svcPortName] = newServiceInfo(servicePort, svc, baseSvcInfo)
-	//	klog.Infof("finished add service processing: %s", svcPortName.String())
 
 	printSvcPortEntry(svcPortName, p.serviceMap)
 }

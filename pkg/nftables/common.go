@@ -221,7 +221,8 @@ func setupInitialNATRules(ci nftableslib.ChainsInterface) error {
 				FlagDADDR:      true,
 				Data:           []byte{unix.RTN_LOCAL},
 			},
-			Action: setActionVerdict(unix.NFT_JUMP, K8sNATNodeports),
+			UserData: []byte("kubernetes service nodeports; NOTE: this must be the last rule in this chain"),
+			Action:   setActionVerdict(unix.NFT_JUMP, K8sNATNodeports),
 		},
 	}
 
