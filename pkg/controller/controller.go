@@ -22,7 +22,6 @@ type Controller interface {
 }
 
 type controller struct {
-	clientset       *kubernetes.Clientset
 	services        informer.ServiceInformer
 	servicesSynced  cache.InformerSynced
 	endpoints       informer.EndpointsInformer

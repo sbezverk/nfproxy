@@ -3,21 +3,13 @@ package proxy
 import (
 	"fmt"
 	"net"
-	"reflect"
-	"strings"
-	"sync"
 
 	"github.com/sbezverk/nfproxy/pkg/nftables"
 	"k8s.io/klog"
 
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/apimachinery/pkg/util/sets"
-	"k8s.io/client-go/tools/record"
 	apiservice "k8s.io/kubernetes/pkg/api/v1/service"
-	"k8s.io/kubernetes/pkg/proxy/metrics"
-	utilproxy "k8s.io/kubernetes/pkg/proxy/util"
-	utilnet "k8s.io/utils/net"
 )
 
 // BaseServiceInfo contains base information that defines a service.
@@ -112,6 +104,7 @@ func (info *BaseServiceInfo) TopologyKeys() []string {
 	return info.topologyKeys
 }
 
+/*
 func (sct *ServiceChangeTracker) newBaseServiceInfo(port *v1.ServicePort, service *v1.Service) *BaseServiceInfo {
 	onlyNodeLocalEndpoints := false
 	if apiservice.RequestsOnlyLocalTraffic(service) {
@@ -166,9 +159,9 @@ func (sct *ServiceChangeTracker) newBaseServiceInfo(port *v1.ServicePort, servic
 
 	return info
 }
+*/
 
-type makeServicePortFunc func(*v1.ServicePort, *v1.Service, *BaseServiceInfo) ServicePort
-
+/*
 // serviceChange contains all changes to services that happened since proxy rules were synced.  For a single object,
 // changes are accumulated, i.e. previous is state from before applying the changes,
 // current is state after applying all of the changes.
@@ -264,10 +257,12 @@ func UpdateServiceMap(serviceMap ServiceMap, changes *ServiceChangeTracker) (res
 
 	return result
 }
+*/
 
 // ServiceMap maps a service to its ServicePort.
 type ServiceMap map[ServicePortName]ServicePort
 
+/*
 // serviceToServiceMap translates a single Service object to a ServiceMap.
 //
 // NOTE: service object should NOT be modified.
@@ -382,7 +377,7 @@ func (sm *ServiceMap) unmerge(other ServiceMap, UDPStaleClusterIP sets.String) {
 		}
 	}
 }
-
+*/
 // internal struct for string service information
 type serviceInfo struct {
 	*BaseServiceInfo

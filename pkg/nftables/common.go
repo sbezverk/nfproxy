@@ -157,7 +157,7 @@ func setupInitialNATRules(ci nftableslib.ChainsInterface) error {
 			Action: setActionVerdict(unix.NFT_JUMP, K8sNATServices),
 		},
 	}
-	if _, err := programChainRules(ci, NatPrerouting, preroutingRules); err != nil {
+	if _, err := programChainRules(ci, NatPrerouting, preroutingRules, 0); err != nil {
 		return err
 	}
 
@@ -167,7 +167,7 @@ func setupInitialNATRules(ci nftableslib.ChainsInterface) error {
 			Action: setActionVerdict(unix.NFT_JUMP, K8sNATServices),
 		},
 	}
-	if _, err := programChainRules(ci, NatOutput, outputRules); err != nil {
+	if _, err := programChainRules(ci, NatOutput, outputRules, 0); err != nil {
 		return err
 	}
 
@@ -177,7 +177,7 @@ func setupInitialNATRules(ci nftableslib.ChainsInterface) error {
 			Action: setActionVerdict(unix.NFT_JUMP, K8sNATPostrouting),
 		},
 	}
-	if _, err := programChainRules(ci, NatPostrouting, postroutingRules); err != nil {
+	if _, err := programChainRules(ci, NatPostrouting, postroutingRules, 0); err != nil {
 		return err
 	}
 
@@ -192,7 +192,7 @@ func setupInitialNATRules(ci nftableslib.ChainsInterface) error {
 			},
 		},
 	}
-	if _, err := programChainRules(ci, K8sNATMarkDrop, markDropRules); err != nil {
+	if _, err := programChainRules(ci, K8sNATMarkDrop, markDropRules, 0); err != nil {
 		return err
 	}
 
@@ -209,7 +209,23 @@ func setupInitialNATRules(ci nftableslib.ChainsInterface) error {
 			Action: masqAction,
 		},
 	}
-	if _, err := programChainRules(ci, K8sNATPostrouting, k8sPostroutingRules); err != nil {
+	if _, err := programChainRules(ci, K8sNATPostrouting, k8sPostroutingRules, 0); err != nil {
+		return err
+	}
+
+	// -A KUBE-SERVICES -m comment --comment "kubernetes service nodeports; NOTE: this must be the last rule in this chain" -m addrtype --dst-type LOCAL -j KUBE-NODEPORTS
+	k8sServiceLastRule := []nftableslib.Rule{
+		{
+			Fib: &nftableslib.Fib{
+				ResultADDRTYPE: true,
+				FlagDADDR:      true,
+				Data:           []byte{unix.RTN_LOCAL},
+			},
+			Action: setActionVerdict(unix.NFT_JUMP, K8sNATNodeports),
+		},
+	}
+
+	if _, err := programChainRules(ci, K8sNATServices, k8sServiceLastRule, 0); err != nil {
 		return err
 	}
 
@@ -234,7 +250,7 @@ func setupInitialFilterRules(ci nftableslib.ChainsInterface, clusterCIDR string)
 		},
 	}
 	// Programming rules for Filter Chain Input hook
-	if _, err := programChainRules(ci, FilterInput, inputRules); err != nil {
+	if _, err := programChainRules(ci, FilterInput, inputRules, 0); err != nil {
 		return err
 	}
 
@@ -255,7 +271,7 @@ func setupInitialFilterRules(ci nftableslib.ChainsInterface, clusterCIDR string)
 		},
 	}
 	// Programming rules for Filter Chain Forward hook
-	if _, err := programChainRules(ci, FilterForward, forwardRules); err != nil {
+	if _, err := programChainRules(ci, FilterForward, forwardRules, 0); err != nil {
 		return err
 	}
 
@@ -276,7 +292,7 @@ func setupInitialFilterRules(ci nftableslib.ChainsInterface, clusterCIDR string)
 		},
 	}
 	// Programming rules for Filter Chain Output hook
-	if _, err := programChainRules(ci, FilterOutput, outputRules); err != nil {
+	if _, err := programChainRules(ci, FilterOutput, outputRules, 0); err != nil {
 		return err
 	}
 
@@ -293,7 +309,7 @@ func setupInitialFilterRules(ci nftableslib.ChainsInterface, clusterCIDR string)
 		},
 	}
 	// Programming rules for Filter Chain Firewall hook
-	if _, err := programChainRules(ci, K8sFilterFirewall, firewallRules); err != nil {
+	if _, err := programChainRules(ci, K8sFilterFirewall, firewallRules, 0); err != nil {
 		return err
 	}
 
@@ -350,7 +366,7 @@ func setupInitialFilterRules(ci nftableslib.ChainsInterface, clusterCIDR string)
 		},
 	}
 	// Programming rules for Filter Chain Firewall hook
-	if _, err := programChainRules(ci, K8sFilterForward, k8sForwardRules); err != nil {
+	if _, err := programChainRules(ci, K8sFilterForward, k8sForwardRules, 0); err != nil {
 		return err
 	}
 
@@ -361,7 +377,7 @@ func setupInitialFilterRules(ci nftableslib.ChainsInterface, clusterCIDR string)
 		},
 	}
 	// Programming rules for Filter Chain Firewall hook
-	if _, err := programChainRules(ci, K8sFilterDoReject, k8sRejectRules); err != nil {
+	if _, err := programChainRules(ci, K8sFilterDoReject, k8sRejectRules, 0); err != nil {
 		return err
 	}
 
@@ -409,7 +425,7 @@ func setupK8sFilterRules(si nftableslib.SetsInterface, ci nftableslib.ChainsInte
 			},
 		},
 	}
-	if _, err := programChainRules(ci, K8sFilterServices, servicesRules); err != nil {
+	if _, err := programChainRules(ci, K8sFilterServices, servicesRules, 0); err != nil {
 		return err
 	}
 

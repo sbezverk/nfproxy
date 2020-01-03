@@ -21,20 +21,12 @@ import (
 	"strconv"
 
 	"github.com/sbezverk/nfproxy/pkg/nftables"
-	"k8s.io/klog"
 
 	v1 "k8s.io/api/core/v1"
-	discovery "k8s.io/api/discovery/v1beta1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/sets"
 
 	utilproxy "k8s.io/kubernetes/pkg/proxy/util"
-)
-
-var supportedEndpointSliceAddressTypes = sets.NewString(
-	string(discovery.AddressTypeIP), // IP is a deprecated address type
-	string(discovery.AddressTypeIPv4),
-	string(discovery.AddressTypeIPv6),
 )
 
 // BaseEndpointInfo contains base information that defines an endpoint.
@@ -91,24 +83,8 @@ func newBaseEndpointInfo(ipFamily v1.IPFamily, protocol v1.Protocol, IP string, 
 	}
 }
 
-type makeEndpointFunc func(info *BaseEndpointInfo) Endpoint
-
 // EndpointsMap maps a service name to a list of all its Endpoints.
 type EndpointsMap map[ServicePortName][]Endpoint
-
-// Merge ensures that the current EndpointsMap contains all <service, endpoints> pairs from the EndpointsMap passed in.
-func (em EndpointsMap) merge(other EndpointsMap) {
-	for svcPortName := range other {
-		em[svcPortName] = other[svcPortName]
-	}
-}
-
-// Unmerge removes the <service, endpoints> pairs from the current EndpointsMap which are contained in the EndpointsMap passed in.
-func (em EndpointsMap) unmerge(other EndpointsMap) {
-	for svcPortName := range other {
-		delete(em, svcPortName)
-	}
-}
 
 // GetLocalEndpointIPs returns endpoints IPs if given endpoint is local - local means the endpoint is running in same host as kube-proxy.
 func (em EndpointsMap) getLocalEndpointIPs() map[types.NamespacedName]sets.String {
@@ -125,41 +101,6 @@ func (em EndpointsMap) getLocalEndpointIPs() map[types.NamespacedName]sets.Strin
 		}
 	}
 	return localIPs
-}
-
-// detectStaleConnections modifies <staleEndpoints> and <staleServices> with detected stale connections. <staleServiceNames>
-// is used to store stale udp service in order to clear udp conntrack later.
-func detectStaleConnections(oldEndpointsMap, newEndpointsMap EndpointsMap, staleEndpoints *[]ServiceEndpoint, staleServiceNames *[]ServicePortName) {
-	for svcPortName, epList := range oldEndpointsMap {
-		if svcPortName.Protocol != v1.ProtocolUDP {
-			continue
-		}
-
-		for _, ep := range epList {
-			stale := true
-			for i := range newEndpointsMap[svcPortName] {
-				if newEndpointsMap[svcPortName][i].Equal(ep) {
-					stale = false
-					break
-				}
-			}
-			if stale {
-				klog.V(4).Infof("Stale endpoint %v -> %v", svcPortName, ep.String())
-				*staleEndpoints = append(*staleEndpoints, ServiceEndpoint{Endpoint: ep.String(), ServicePortName: svcPortName})
-			}
-		}
-	}
-
-	for svcPortName, epList := range newEndpointsMap {
-		if svcPortName.Protocol != v1.ProtocolUDP {
-			continue
-		}
-
-		// For udp service, if its backend changes from 0 to non-0. There may exist a conntrack entry that could blackhole traffic to the service.
-		if len(epList) > 0 && len(oldEndpointsMap[svcPortName]) == 0 {
-			*staleServiceNames = append(*staleServiceNames, svcPortName)
-		}
-	}
 }
 
 // internal struct for endpoints information

@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"net"
-	"time"
 
 	"github.com/google/nftables"
 	"github.com/sbezverk/nftableslib"
@@ -16,10 +15,6 @@ import (
 const (
 	nfV4TableName = "kube-nfproxy-v4"
 	nfV6TableName = "kube-nfproxy-v6"
-)
-
-var (
-	nfRuleRetryInterval = time.Second * 30
 )
 
 // NFTInterface provides interfaces to access ipv4/6 chains and ipv4/6 sets
@@ -124,20 +119,8 @@ func getNFTInterface(ti nftableslib.TablesInterface) (*NFTInterface, error) {
 // if successful return rule ID.
 func AddEndpointRules(nfti *NFTInterface, tableFamily nftables.TableFamily, chain string,
 	ipaddr string, proto v1.Protocol, port int32) ([]uint64, error) {
-	var ruleProto byte
-	var ci nftableslib.ChainsInterface
-	switch proto {
-	case v1.ProtocolTCP:
-		ruleProto = unix.IPPROTO_TCP
-	case v1.ProtocolUDP:
-		ruleProto = unix.IPPROTO_UDP
-	}
-	switch tableFamily {
-	case nftables.TableFamilyIPv4:
-		ci = nfti.CIv4
-	case nftables.TableFamilyIPv6:
-		ci = nfti.CIv6
-	}
+	ci := ciForTableFamily(nfti, tableFamily)
+	protoByte := protoByteFromV1Proto(proto)
 
 	dnat := &nftableslib.NATAttributes{
 		L3Addr:      [2]*nftableslib.IPAddr{setIPAddr(ipaddr)},
@@ -164,7 +147,7 @@ func AddEndpointRules(nfti *NFTInterface, tableFamily nftables.TableFamily, chai
 		{
 			// -A KUBE-SEP-FS3FUULGZPVD4VYB -p tcp -m tcp -j DNAT --to-destination 57.112.0.247:8080
 			L4: &nftableslib.L4Rule{
-				L4Proto: ruleProto,
+				L4Proto: protoByte,
 			},
 			Action: dnatAction,
 		},
@@ -172,7 +155,7 @@ func AddEndpointRules(nfti *NFTInterface, tableFamily nftables.TableFamily, chai
 	if err := ci.Chains().CreateImm(chain, nil); err != nil {
 		return nil, fmt.Errorf("AddEndpointRules: ci.Chains().CreateImm exit with error: %+v", err)
 	}
-	id, err := programChainRules(ci, chain, rules)
+	id, err := programChainRules(ci, chain, rules, 0)
 	if err != nil {
 		return nil, fmt.Errorf("AddEndpointRules: programChainRules exit with error: %+v", err)
 	}
@@ -182,13 +165,7 @@ func AddEndpointRules(nfti *NFTInterface, tableFamily nftables.TableFamily, chai
 
 // DeleteEndpointRules delete nftables rules associated with an endpoint and then deletes endpoint's chain
 func DeleteEndpointRules(nfti *NFTInterface, tableFamily nftables.TableFamily, chain string, ruleID []uint64) error {
-	var ci nftableslib.ChainsInterface
-	switch tableFamily {
-	case nftables.TableFamilyIPv4:
-		ci = nfti.CIv4
-	case nftables.TableFamilyIPv6:
-		ci = nfti.CIv6
-	}
+	ci := ciForTableFamily(nfti, tableFamily)
 
 	if err := deleteChainRules(ci, chain, ruleID); err != nil {
 		return err
@@ -199,13 +176,7 @@ func DeleteEndpointRules(nfti *NFTInterface, tableFamily nftables.TableFamily, c
 
 // DeleteServiceRules deletes nftables rules associated with a service
 func DeleteServiceRules(nfti *NFTInterface, tableFamily nftables.TableFamily, chain string, ruleID []uint64) error {
-	var ci nftableslib.ChainsInterface
-	switch tableFamily {
-	case nftables.TableFamilyIPv4:
-		ci = nfti.CIv4
-	case nftables.TableFamilyIPv6:
-		ci = nfti.CIv6
-	}
+	ci := ciForTableFamily(nfti, tableFamily)
 
 	if err := deleteChainRules(ci, chain, ruleID); err != nil {
 		return err
@@ -216,28 +187,25 @@ func DeleteServiceRules(nfti *NFTInterface, tableFamily nftables.TableFamily, ch
 
 // DeleteChain deletes chain associated with a service or an endpoint
 func DeleteChain(nfti *NFTInterface, tableFamily nftables.TableFamily, chain string) error {
-	var ci nftableslib.ChainsInterface
-	switch tableFamily {
-	case nftables.TableFamilyIPv4:
-		ci = nfti.CIv4
-	case nftables.TableFamilyIPv6:
-		ci = nfti.CIv6
-	}
+	ci := ciForTableFamily(nfti, tableFamily)
 
 	return ci.Chains().DeleteImm(chain)
 }
 
-func programChainRules(ci nftableslib.ChainsInterface, chain string, rules []nftableslib.Rule) ([]uint64, error) {
+func programChainRules(ci nftableslib.ChainsInterface, chain string, rules []nftableslib.Rule, position int) ([]uint64, error) {
 	var ids []uint64
+	var id uint64
 	var err error
 	ri, err := ci.Chains().Chain(chain)
 	if err != nil {
-		return nil, fmt.Errorf("programChainRules: ci.Chains().Chain exited with error: %+v", err)
+		return nil, err
 	}
-	for _, r := range rules {
-		id, err := ri.Rules().CreateImm(&r)
+	id = uint64(position)
+	for i := 0; i < len(rules); i++ {
+		rules[i].Position = int(id)
+		id, err = ri.Rules().CreateImm(&rules[i])
 		if err != nil {
-			return nil, fmt.Errorf("programChainRules: ri.Rules().CreateImm exited with error: %+v", err)
+			return nil, err
 		}
 		ids = append(ids, id)
 	}
@@ -363,13 +331,7 @@ func RemoveFromNoEndpointsList(nfti *NFTInterface, tableFamily nftables.TableFam
 
 // AddServiceChain adds a specific service's chain
 func AddServiceChain(nfti *NFTInterface, tableFamily nftables.TableFamily, chain string) error {
-	var ci nftableslib.ChainsInterface
-	switch tableFamily {
-	case nftables.TableFamilyIPv4:
-		ci = nfti.CIv4
-	case nftables.TableFamilyIPv6:
-		ci = nfti.CIv6
-	}
+	ci := ciForTableFamily(nfti, tableFamily)
 	if err := ci.Chains().CreateImm(chain, nil); err != nil {
 		return err
 	}
@@ -380,15 +342,10 @@ func AddServiceChain(nfti *NFTInterface, tableFamily nftables.TableFamily, chain
 // ProgramServiceEndpoints programms endpoints to the service chain, if multiple endpoint exists, endpoint rules
 // will be programmed for loadbalancing.
 func ProgramServiceEndpoints(nfti *NFTInterface, tableFamily nftables.TableFamily, chain string, epchains []string, ruleID []uint64) ([]uint64, error) {
-	var ci nftableslib.ChainsInterface
 	var err error
 	var id uint64
-	switch tableFamily {
-	case nftables.TableFamilyIPv4:
-		ci = nfti.CIv4
-	case nftables.TableFamilyIPv6:
-		ci = nfti.CIv6
-	}
+
+	ci := ciForTableFamily(nfti, tableFamily)
 
 	loadbalanceAction, err := nftableslib.SetLoadbalance(epchains)
 	if err != nil {
@@ -409,7 +366,8 @@ func ProgramServiceEndpoints(nfti *NFTInterface, tableFamily nftables.TableFamil
 		}
 	} else {
 		// Service has previously progrmmed endpoint rule, need to Insert a new rule and then delete the old one
-		id, err = ri.Rules().InsertImm(&rule, int(ruleID[0]))
+		rule.Position = int(ruleID[0])
+		id, err = ri.Rules().InsertImm(&rule)
 		if err != nil {
 			return nil, fmt.Errorf("fail to program endpoints rules for service chain %s with error: %+v", chain, err)
 		}
@@ -424,26 +382,14 @@ func ProgramServiceEndpoints(nfti *NFTInterface, tableFamily nftables.TableFamil
 // ProgramServiceClusterIP programs Service's cluster ip rules in k8sNATServices chain
 func ProgramServiceClusterIP(nfti *NFTInterface, tableFamily nftables.TableFamily, chain string,
 	clusterIP string, proto v1.Protocol, port int) ([]uint64, error) {
-	var ci nftableslib.ChainsInterface
 	var err error
 	var id []uint64
-	var clusterCidr string
-	switch tableFamily {
-	case nftables.TableFamilyIPv4:
-		ci = nfti.CIv4
-		clusterCidr = nfti.ClusterCidrIpv4
-	case nftables.TableFamilyIPv6:
-		ci = nfti.CIv6
+
+	ci := ciForTableFamily(nfti, tableFamily)
+	protoByte := protoByteFromV1Proto(proto)
+	clusterCidr := nfti.ClusterCidrIpv4
+	if tableFamily == nftables.TableFamilyIPv6 {
 		clusterCidr = nfti.ClusterCidrIpv6
-	}
-	var protoByte byte
-	switch proto {
-	case v1.ProtocolTCP:
-		protoByte = unix.IPPROTO_TCP
-	case v1.ProtocolUDP:
-		protoByte = unix.IPPROTO_UDP
-	case v1.ProtocolSCTP:
-		protoByte = unix.IPPROTO_SCTP
 	}
 	clusterIPRules := []nftableslib.Rule{
 		{
@@ -487,7 +433,7 @@ func ProgramServiceClusterIP(nfti *NFTInterface, tableFamily nftables.TableFamil
 		},
 	}
 
-	id, err = programChainRules(ci, K8sNATServices, clusterIPRules)
+	id, err = programClusterIPRules(ci, clusterIPRules)
 	if err != nil {
 		return nil, err
 	}
@@ -495,18 +441,14 @@ func ProgramServiceClusterIP(nfti *NFTInterface, tableFamily nftables.TableFamil
 	return id, nil
 }
 
-// ProgramServiceExternalIP programs Service's external ips rules in k8sNATServices chain
-func ProgramServiceExternalIP(nfti *NFTInterface, tableFamily nftables.TableFamily, chain string,
-	externalIP []string, proto v1.Protocol, port int) ([]uint64, error) {
-	var ci nftableslib.ChainsInterface
-	var err error
-	var id []uint64
-	switch tableFamily {
-	case nftables.TableFamilyIPv4:
-		ci = nfti.CIv4
-	case nftables.TableFamilyIPv6:
-		ci = nfti.CIv6
+func ciForTableFamily(nfti *NFTInterface, tableFamily nftables.TableFamily) nftableslib.ChainsInterface {
+	if tableFamily == nftables.TableFamilyIPv6 {
+		return nfti.CIv6
 	}
+	return nfti.CIv4
+}
+
+func protoByteFromV1Proto(proto v1.Protocol) byte {
 	var protoByte byte
 	switch proto {
 	case v1.ProtocolTCP:
@@ -515,7 +457,22 @@ func ProgramServiceExternalIP(nfti *NFTInterface, tableFamily nftables.TableFami
 		protoByte = unix.IPPROTO_UDP
 	case v1.ProtocolSCTP:
 		protoByte = unix.IPPROTO_SCTP
+	default:
+		protoByte = unix.IPPROTO_TCP
 	}
+
+	return protoByte
+}
+
+// ProgramServiceExternalIP programs Service's external ips rules in k8sNATServices chain
+func ProgramServiceExternalIP(nfti *NFTInterface, tableFamily nftables.TableFamily, chain string,
+	externalIP []string, proto v1.Protocol, port int, position int) ([]uint64, error) {
+	var err error
+	var id []uint64
+
+	ci := ciForTableFamily(nfti, tableFamily)
+	protoByte := protoByteFromV1Proto(proto)
+
 	var externalIPRules []nftableslib.Rule
 	// Loop through all external IPs and generate set of rules for each
 	for _, extIP := range externalIP {
@@ -592,10 +549,112 @@ func ProgramServiceExternalIP(nfti *NFTInterface, tableFamily nftables.TableFami
 			})
 	}
 
-	id, err = programChainRules(ci, K8sNATServices, externalIPRules)
+	id, err = programChainRules(ci, K8sNATServices, externalIPRules, position)
 	if err != nil {
 		return nil, err
 	}
 
 	return id, nil
+}
+
+// ProgramServiceLoadBalancerIP programs Service's LoadBalancer ips rules in k8sNATServices chain
+func ProgramServiceLoadBalancerIP(nfti *NFTInterface, tableFamily nftables.TableFamily, chain string,
+	lbIPs []string, proto v1.Protocol, port int, position int) ([]uint64, error) {
+	var err error
+	var id []uint64
+
+	ci := ciForTableFamily(nfti, tableFamily)
+	protoByte := protoByteFromV1Proto(proto)
+
+	var lbIPRules []nftableslib.Rule
+	// Loop through all Load Balancer IPs and generate set of rules for each
+	for _, lbIP := range lbIPs {
+		lbIPRules = append(lbIPRules,
+			nftableslib.Rule{
+				// -A KUBE-SERVICES -d 192.168.180.240/32 -p tcp -m comment --comment "default/app2:http-web2 loadbalancer IP" -m tcp --dport 808 -j KUBE-FW-H77O6A5PM6DG4AKY
+				L3: &nftableslib.L3Rule{
+					Dst: &nftableslib.IPAddrSpec{
+						List: []*nftableslib.IPAddr{setIPAddr(lbIP)},
+					},
+				},
+				L4: &nftableslib.L4Rule{
+					L4Proto: protoByte,
+					Dst: &nftableslib.Port{
+						List: nftableslib.SetPortList([]int{port}),
+					},
+				},
+				Action: setActionVerdict(unix.NFT_JUMP, chain),
+			})
+	}
+
+	id, err = programChainRules(ci, K8sNATServices, lbIPRules, position)
+	if err != nil {
+		return nil, err
+	}
+
+	return id, nil
+}
+
+// ProgramServiceNodePort programs Service's Nodeport in K8sNATNodeports chain
+func ProgramServiceNodePort(nfti *NFTInterface, tableFamily nftables.TableFamily, chain string, proto v1.Protocol, port int) ([]uint64, error) {
+	var err error
+	var id []uint64
+
+	ci := ciForTableFamily(nfti, tableFamily)
+	protoByte := protoByteFromV1Proto(proto)
+
+	var nodeportRules []nftableslib.Rule
+	nodeportRules = append(nodeportRules,
+		nftableslib.Rule{
+			// -A KUBE-NODEPORTS -p tcp -m comment --comment "istio-system/istio-ingressgateway:tls" -m tcp --dport 30725 -j KUBE-MARK-MASQ
+			// -A KUBE-NODEPORTS -p tcp -m comment --comment "istio-system/istio-ingressgateway:tls" -m tcp --dport 30725 -j KUBE-SVC-S4S242M2WNFIAT6Y
+			L4: &nftableslib.L4Rule{
+				L4Proto: protoByte,
+				Dst: &nftableslib.Port{
+					List: nftableslib.SetPortList([]int{port}),
+				},
+			},
+			// If not all nodeports needed to be marked, this block can be done conditionally
+			Meta: &nftableslib.Meta{
+				Mark: &nftableslib.MetaMark{
+					Set:   true,
+					Value: 0x4000,
+				},
+			},
+			Action: setActionVerdict(unix.NFT_JUMP, chain),
+		})
+
+	id, err = programChainRules(ci, K8sNATNodeports, nodeportRules, 0)
+	if err != nil {
+		return nil, err
+	}
+
+	return id, nil
+}
+
+func programClusterIPRules(ci nftableslib.ChainsInterface, rules []nftableslib.Rule) ([]uint64, error) {
+	var ids []uint64
+	var err error
+	ri, err := ci.Chains().Chain(K8sNATServices)
+	if err != nil {
+		return nil, err
+	}
+
+	// Cluster IP rules always inserted at the beginning of K8sNATServices chain followed by External and Loadbalancer rules
+	rules[0].Position = 0
+	id, err := ri.Rules().InsertImm(&rules[0])
+	if err != nil {
+		return nil, err
+	}
+	ids = append(ids, id)
+	for i := 1; i < len(rules); i++ {
+		rules[i].Position = int(id)
+		id, err := ri.Rules().CreateImm(&rules[i])
+		if err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+
+	return ids, nil
 }

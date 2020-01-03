@@ -44,7 +44,7 @@ func setupSignalHandler() (stopCh <-chan struct{}) {
 
 func main() {
 	flag.Parse()
-	flag.Set("logtostderr", "true")
+	_ = flag.Set("logtostderr", "true")
 
 	rand.Seed(time.Now().UnixNano())
 
@@ -84,10 +84,8 @@ func main() {
 	}
 
 	stopCh := setupSignalHandler()
-	select {
-	case <-stopCh:
-		klog.Info("Received stop signal, shuting down controller")
-	}
+	<-stopCh
+	klog.Info("Received stop signal, shuting down controller")
 
 	os.Exit(0)
 }
