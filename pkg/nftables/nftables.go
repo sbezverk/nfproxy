@@ -338,13 +338,25 @@ func RemoveFromNoEndpointsList(nfti *NFTInterface, tableFamily nftables.TableFam
 	return nil
 }
 
-// AddServiceChain adds a specific service's chain
-func AddServiceChain(nfti *NFTInterface, tableFamily nftables.TableFamily, chain string) error {
-	ci := ciForTableFamily(nfti, tableFamily)
-	if err := ci.Chains().CreateImm(chain, nil); err != nil {
-		return err
+// AddServiceChains adds a specific to service port chains k8s-nfproxy-svc-{svcID},k8s-nfproxy-fw-{svcID}, k8s-nfproxy-xlb-{svcID}
+func AddServiceChains(nfti *NFTInterface, tableFamily nftables.TableFamily, svcID string) error {
+	for _, prefix := range []string{K8sSvcPrefix, K8sFwPrefix, K8sXlbPrefix} {
+		ci := ciForTableFamily(nfti, tableFamily)
+		if err := ci.Chains().CreateImm(prefix+svcID, nil); err != nil {
+			return err
+		}
 	}
+	return nil
+}
 
+// DeleteServiceChains removes a specific to service port chains k8s-nfproxy-svc-{svcID},k8s-nfproxy-fw-{svcID}, k8s-nfproxy-xlb-{svcID}
+func DeleteServiceChains(nfti *NFTInterface, tableFamily nftables.TableFamily, svcID string) error {
+	for _, prefix := range []string{K8sSvcPrefix, K8sFwPrefix, K8sXlbPrefix} {
+		ci := ciForTableFamily(nfti, tableFamily)
+		if err := ci.Chains().DeleteImm(prefix + svcID); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
@@ -567,7 +579,7 @@ func ProgramServiceExternalIP(nfti *NFTInterface, tableFamily nftables.TableFami
 }
 
 // ProgramServiceLoadBalancerIP programs Service's LoadBalancer ips rules in k8sNATServices chain
-func ProgramServiceLoadBalancerIP(nfti *NFTInterface, tableFamily nftables.TableFamily, chain string,
+func ProgramServiceLoadBalancerIP(nfti *NFTInterface, tableFamily nftables.TableFamily, svcID string,
 	lbIPs []string, proto v1.Protocol, port int, position int) ([]uint64, error) {
 	var err error
 	var id []uint64
@@ -592,11 +604,44 @@ func ProgramServiceLoadBalancerIP(nfti *NFTInterface, tableFamily nftables.Table
 						List: nftableslib.SetPortList([]int{port}),
 					},
 				},
-				Action: setActionVerdict(unix.NFT_JUMP, chain),
+				Action: setActionVerdict(unix.NFT_JUMP, K8sFwPrefix+svcID),
 			})
 	}
 
 	id, err = programChainRules(ci, K8sNATServices, lbIPRules, position)
+	if err != nil {
+		return nil, err
+	}
+
+	return id, nil
+}
+
+// ProgramServiceLoadBalancerFW programs Service's LoadBalancer FW rules
+func ProgramServiceLoadBalancerFW(nfti *NFTInterface, tableFamily nftables.TableFamily, svcID string) ([]uint64, error) {
+	var err error
+	var id []uint64
+
+	ci := ciForTableFamily(nfti, tableFamily)
+
+	lbIPRules := []nftableslib.Rule{
+		{
+			// -A KUBE-FW-H77O6A5PM6DG4AKY -m comment --comment "default/app2:http-web2 loadbalancer IP" -j KUBE-MARK-MASQ
+			// -A KUBE-FW-H77O6A5PM6DG4AKY -m comment --comment "default/app2:http-web2 loadbalancer IP" -j KUBE-SVC-H77O6A5PM6DG4AKY
+			// -A KUBE-FW-H77O6A5PM6DG4AKY -m comment --comment "default/app2:http-web2 loadbalancer IP" -j KUBE-MARK-DROP
+			Meta: &nftableslib.Meta{
+				Mark: &nftableslib.MetaMark{
+					Set:   true,
+					Value: 0x4000,
+				},
+			},
+			Action: setActionVerdict(unix.NFT_JUMP, K8sSvcPrefix+svcID),
+		},
+		{
+			Action: setActionVerdict(unix.NFT_JUMP, K8sNATMarkDrop),
+		},
+	}
+
+	id, err = programChainRules(ci, K8sFwPrefix+svcID, lbIPRules, 0)
 	if err != nil {
 		return nil, err
 	}
