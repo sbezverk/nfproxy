@@ -40,11 +40,12 @@ type EPnft struct {
 	Rule      map[nftables.TableFamily]*Rule
 }
 
-// SVCChain defines a map of chains a service uses for its rules, the key is chain names
+// SVCChain defines a map of chains a service uses for its rules, the key is chain names, it is combined from
+// a chain prefix "k8s-nfproxy-svc-" or "k8s-nfproxy-fw-" and service's unique ID
 type SVCChain struct {
 	// Service carries the name of service's specific chain, this chain usually points to one or more endpoit chains
-	Service string
-	Chain   map[string]*Rule
+	ServiceID string
+	Chain     map[string]*Rule
 }
 
 // SVCnft defines per IP Family nftables chains used by individual service.
@@ -228,11 +229,11 @@ func deleteChainRules(ci nftableslib.ChainsInterface, chain string, rules []uint
 }
 
 // GetSvcChain builds a chain map used by a specific service
-func GetSvcChain(tableFamily nftables.TableFamily, svcChainName string) map[nftables.TableFamily]SVCChain {
+func GetSvcChain(tableFamily nftables.TableFamily, svcID string) map[nftables.TableFamily]SVCChain {
 	chains := make(map[nftables.TableFamily]SVCChain)
 	chain := SVCChain{
-		Service: svcChainName,
-		Chain:   make(map[string]*Rule),
+		ServiceID: svcID,
+		Chain:     make(map[string]*Rule),
 	}
 	// k8sNATNodeports chain is used if service has any node ports
 	chain.Chain[K8sNATNodeports] = &Rule{
@@ -244,9 +245,17 @@ func GetSvcChain(tableFamily nftables.TableFamily, svcChainName string) map[nfta
 		Chain:  K8sNATServices,
 		RuleID: nil,
 	}
-	//  svcChainName is services chain used by a specific service
-	chain.Chain[svcChainName] = &Rule{
-		Chain:  K8sNATServices,
+	//  K8sSvcPrefix+svcID is services chain used by a specific service
+	chain.Chain[K8sSvcPrefix+svcID] = &Rule{
+		Chain:  K8sSvcPrefix + svcID,
+		RuleID: nil,
+	}
+	chain.Chain[K8sFwPrefix+svcID] = &Rule{
+		Chain:  K8sFwPrefix + svcID,
+		RuleID: nil,
+	}
+	chain.Chain[K8sXlbPrefix+svcID] = &Rule{
+		Chain:  K8sXlbPrefix + svcID,
 		RuleID: nil,
 	}
 	chains[tableFamily] = chain
