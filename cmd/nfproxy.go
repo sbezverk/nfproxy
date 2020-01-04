@@ -21,11 +21,15 @@ import (
 )
 
 var (
-	kubeconfig string
+	kubeconfig      string
+	ipv4ClusterCIDR string
+	ipv6ClusterCIDR string
 )
 
 func init() {
 	flag.StringVar(&kubeconfig, "kubeconfig", "", "Absolute path to the kubeconfig file.")
+	flag.StringVar(&ipv4ClusterCIDR, "ipv4clustercidr", "", "The IPv4 CIDR range of pods in the cluster.")
+	flag.StringVar(&ipv6ClusterCIDR, "ipv6clustercidr", "", "The IPv6 CIDR range of pods in the cluster.")
 }
 
 func setupSignalHandler() (stopCh <-chan struct{}) {
@@ -59,7 +63,9 @@ func main() {
 	}
 
 	// Attempt to Init nftables, if fails exit with error
-	nfti, err := nftables.InitNFTables("57.112.0.0/12", "2001:470:b16e:1001::/64")
+	// TODO Add validation of ipv4ClusterCIDR, ipv6ClusterCIDR for a valid IPv4 or IPv6 address
+	// One is allowed to be empty but not both.
+	nfti, err := nftables.InitNFTables(ipv4ClusterCIDR, ipv6ClusterCIDR)
 	if err != nil {
 		klog.Errorf("nfproxy failed to initialize nftables with error: %+v", err)
 		os.Exit(1)
