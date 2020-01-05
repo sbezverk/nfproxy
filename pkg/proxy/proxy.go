@@ -131,17 +131,20 @@ func (p *proxy) addService(svcPortName ServicePortName, servicePort *v1.ServiceP
 	if utilnet.IsIPv6String(svc.Spec.ClusterIP) {
 		tableFamily = utilnftables.TableFamilyIPv6
 	}
-	cn := servicePortSvcChainName(svcPortName.String(), string(servicePort.Protocol), baseSvcInfo.String())
+	svcID := servicePortSvcID(svcPortName.String(), string(servicePort.Protocol), baseSvcInfo.String())
 	baseSvcInfo.svcnft.Interface = p.nfti
-	baseSvcInfo.svcnft.Chains = nftables.GetSvcChain(tableFamily, cn)
+	baseSvcInfo.svcnft.Chains = nftables.GetSvcChain(tableFamily, svcID)
 	baseSvcInfo.svcnft.WithEndpoints = false
-	// Programming Service Port's chains
+	// Creating a set of chains (k8s-nfproxy-svc-{svcID},k8s-nfproxy-fw-{svcID}, k8s-nfproxy-xlb-{svcID}) for a service port
+	if err := nftables.AddServiceChains(p.nfti, tableFamily, svcID); err != nil {
+		klog.Errorf("failed to add service port %s chains with error: %+v", svcPortName.String(), err)
+	}
+
+	// Programming Service Port's chains with rules
 	// To preserve the order of different type of rules (ClusterIP, External, Loadbalancing) for the same Service Port,
 	// lastSvcRulePosition carries a position where the next rule should be positioned.
 	lastSvcRulePosition := 0
-	if err := nftables.AddServiceChain(p.nfti, tableFamily, cn); err != nil {
-		klog.Errorf("failed to add service chain %s for service %s with error: %+v", cn, svcPortName.String(), err)
-	}
+	cn := nftables.K8sSvcPrefix + svcID
 	// Programming Service's cluster ip
 	if clip := baseSvcInfo.ClusterIP(); clip != nil {
 		id, err := nftables.ProgramServiceClusterIP(p.nfti, tableFamily, cn, clip.String(), baseSvcInfo.Protocol(), baseSvcInfo.Port())
@@ -176,8 +179,15 @@ func (p *proxy) addService(svcPortName ServicePortName, servicePort *v1.ServiceP
 	}
 	// Programming Service's loadbalancer ips
 	if lbip := baseSvcInfo.LoadBalancerIPStrings(); len(lbip) != 0 {
+		// Programming rules for Service Port's FW chain used by Loadbalancer
+		id, err := nftables.ProgramServiceLoadBalancerFW(p.nfti, tableFamily, svcID)
+		if err != nil {
+			klog.Errorf("Failed to program Service %s loadbalancer FW rules with error: %+v", svcPortName.String(), err)
+			return
+		}
+		baseSvcInfo.svcnft.Chains[tableFamily].Chain[nftables.K8sFwPrefix+svcID].RuleID = id
 		// Position parameter is always a last programmed rule ID
-		id, err := nftables.ProgramServiceLoadBalancerIP(p.nfti, tableFamily, cn, lbip, baseSvcInfo.Protocol(), baseSvcInfo.Port(), lastSvcRulePosition)
+		id, err = nftables.ProgramServiceLoadBalancerIP(p.nfti, tableFamily, svcID, lbip, baseSvcInfo.Protocol(), baseSvcInfo.Port(), lastSvcRulePosition)
 		if err != nil {
 			klog.Errorf("Failed to program Service %s loadbalancer IP rule with error: %+v", svcPortName.String(), err)
 			return
@@ -185,7 +195,7 @@ func (p *proxy) addService(svcPortName ServicePortName, servicePort *v1.ServiceP
 		// Appending rules' IDs generated for Service's Loadbalancer IPs
 		baseSvcInfo.svcnft.Chains[tableFamily].Chain[nftables.K8sNATServices].RuleID = append(baseSvcInfo.svcnft.Chains[tableFamily].Chain[nftables.K8sNATServices].RuleID, id...)
 	}
-	// If svcPortName does not have entry in the map, it will return nil and len of nil would be 0
+	// If svcPortName does not exist in the map, it will return nil and len of nil would be 0
 	if len(p.endpointsMap[svcPortName]) == 0 {
 		if err := p.addToNoEndpointsList(baseSvcInfo, tableFamily); err != nil {
 			klog.Errorf("failed to add %s to No Endpoints Set with error: %+v", svcPortName.String(), err)
@@ -234,8 +244,6 @@ func (p *proxy) deleteService(svcPortName ServicePortName, servicePort *v1.Servi
 		return
 	}
 	baseInfo, _ := svcInfo.(*serviceInfo)
-	//	klog.Infof("deleteService for a service port name: %s protocol: %s address: %s port: %d",
-	//		svcPortName.String(), string(svcPortName.Protocol), baseInfo.ClusterIP().String(), servicePort.Port)
 	_, tableFamily := getIPFamily(baseInfo.ClusterIP().String())
 
 	if !baseInfo.svcnft.WithEndpoints {
@@ -245,7 +253,6 @@ func (p *proxy) deleteService(svcPortName ServicePortName, servicePort *v1.Servi
 		}
 	}
 	// Remove svcPortName related chains and rules
-	scn := baseInfo.svcnft.Chains[tableFamily].Service
 	for chain, rules := range baseInfo.svcnft.Chains[tableFamily].Chain {
 		if len(rules.RuleID) != 0 {
 			if err := nftables.DeleteServiceRules(p.nfti, tableFamily, chain, rules.RuleID); err != nil {
@@ -253,8 +260,9 @@ func (p *proxy) deleteService(svcPortName ServicePortName, servicePort *v1.Servi
 			}
 		}
 	}
-	if err := nftables.DeleteChain(p.nfti, tableFamily, scn); err != nil {
-		klog.Errorf("failed to delete service chain: %s service port name: %s with error: %+v", scn, svcPortName.String(), err)
+	// Removing service port specific chains
+	if err := nftables.DeleteServiceChains(p.nfti, tableFamily, baseInfo.svcnft.Chains[tableFamily].ServiceID); err != nil {
+		klog.Errorf("failed to delete chains for service port name: %s with error: %+v", svcPortName.String(), err)
 	}
 
 	// Delete svcPortName from known svcPortName map
@@ -334,7 +342,7 @@ func (p *proxy) UpdateServiceChain(svcPortName ServicePortName, tableFamily util
 		}
 		// Programming rules for existing endpoints
 		epsChains := p.getServicePortEndpointChains(svcPortName, tableFamily)
-		cn := entry.svcnft.Chains[tableFamily].Service
+		cn := nftables.K8sSvcPrefix + entry.svcnft.Chains[tableFamily].ServiceID
 		svcRules := entry.svcnft.Chains[tableFamily].Chain[cn]
 		// Check if the service still has any backends
 		if len(epsChains) != 0 {
@@ -529,7 +537,7 @@ func printSvcPortEntry(svcPortName ServicePortName, svc ServiceMap) {
 	entry := se.(*serviceInfo)
 	fmt.Printf("Service port name: %s with endpoints: %t service chain name: %s\n", svcPortName.String(), entry.svcnft.WithEndpoints, entry.serviceNameString)
 	for tf, svcchains := range entry.svcnft.Chains {
-		fmt.Printf("Service table family: %+v service name: %s\n", tf, svcchains.Service)
+		fmt.Printf("Service table family: %+v service id: %s\n", tf, svcchains.ServiceID)
 		for cn, rules := range svcchains.Chain {
 			fmt.Printf("Chain name: %s rules: %+v\n", cn, rules.RuleID)
 		}

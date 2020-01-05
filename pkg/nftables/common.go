@@ -28,6 +28,10 @@ const (
 	K8sNATPostrouting = "k8s-nfproxy-nat-postrouting"
 
 	k8sNoEndpointsSet = "no-endpoints-services"
+
+	K8sSvcPrefix = "k8s-nfproxy-svc-"
+	K8sFwPrefix  = "k8s-nfproxy-fw-"
+	K8sXlbPrefix = "k8s-nfproxy-xlb-"
 )
 
 func setActionVerdict(key int, chain ...string) *nftableslib.RuleAction {
