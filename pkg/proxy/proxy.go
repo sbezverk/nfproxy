@@ -439,7 +439,7 @@ func (p *proxy) UpdateEndpoints(epOld, epNew *v1.Endpoints) {
 		// ignoring it
 		return
 	}
-	klog.Infof("Update endpoint: %s/%s", epNew.Namespace, epNew.Name)
+	//	klog.Infof("Update endpoint: %s/%s", epNew.Namespace, epNew.Name)
 	if !reflect.DeepEqual(epOld.Subsets, epNew.Subsets) {
 		// First check if any new endpoint rules needs to be added
 		for i := range epNew.Subsets {

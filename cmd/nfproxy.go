@@ -80,9 +80,9 @@ func main() {
 	eventBroadcaster := record.NewBroadcaster()
 	recorder := eventBroadcaster.NewRecorder(scheme.Scheme, v1.EventSource{Component: "nfproxy", Host: hostname})
 
+	// Create new instance of a proxy process
 	nfproxy := proxy.NewProxy(nfti, hostname, recorder)
-	// Program initializes default nftables proxy's rules
-	//
+
 	controller := controller.NewController(client, nfproxy)
 	if err := controller.Run(wait.NeverStop); err != nil {
 		klog.Errorf("nfproxy failed to start controller with error: %s", err)
