@@ -38,9 +38,9 @@ func (c *controller) handleAddService(obj interface{}) {
 		utilruntime.HandleError(fmt.Errorf("unexpected object type: %v", obj))
 		return
 	}
-	if svc.Name == "app2" {
-		c.proxy.AddService(svc)
-	}
+	//	if svc.Name == "app2" {
+	c.proxy.AddService(svc)
+	//	}
 }
 
 func (c *controller) handleUpdateService(oldObj, newObj interface{}) {
@@ -60,9 +60,9 @@ func (c *controller) handleUpdateService(oldObj, newObj interface{}) {
 	if svcOld.ObjectMeta.ResourceVersion == svcNew.ObjectMeta.ResourceVersion {
 		return
 	}
-	if svcNew.Name == "app2" || svcOld.Name == "app2" {
-		c.proxy.UpdateService(svcOld, svcNew)
-	}
+	//	if svcNew.Name == "app2" || svcOld.Name == "app2" {
+	c.proxy.UpdateService(svcOld, svcNew)
+	//	}
 }
 
 func (c *controller) handleDeleteService(obj interface{}) {
@@ -81,9 +81,9 @@ func (c *controller) handleDeleteService(obj interface{}) {
 			return
 		}
 	}
-	if svc.Name == "app2" {
-		c.proxy.DeleteService(svc)
-	}
+	//	if svc.Name == "app2" {
+	c.proxy.DeleteService(svc)
+	//	}
 }
 
 func (c *controller) handleAddEndpoint(obj interface{}) {
@@ -95,9 +95,9 @@ func (c *controller) handleAddEndpoint(obj interface{}) {
 		utilruntime.HandleError(fmt.Errorf("unexpected object type: %v", obj))
 		return
 	}
-	if ep.Name == "app2" {
-		c.proxy.AddEndpoints(ep)
-	}
+	//	if ep.Name == "app2" {
+	c.proxy.AddEndpoints(ep)
+	//	}
 }
 
 func (c *controller) handleUpdateEndpoint(oldObj, newObj interface{}) {
@@ -118,9 +118,9 @@ func (c *controller) handleUpdateEndpoint(oldObj, newObj interface{}) {
 	if epOld.ObjectMeta.ResourceVersion == epNew.ObjectMeta.ResourceVersion {
 		return
 	}
-	if epOld.Name == "app2" || epNew.Name == "app2" {
-		c.proxy.UpdateEndpoints(epOld, epNew)
-	}
+	//	if epOld.Name == "app2" || epNew.Name == "app2" {
+	c.proxy.UpdateEndpoints(epOld, epNew)
+	//	}
 }
 
 func (c *controller) handleDeleteEndpoint(obj interface{}) {
@@ -139,9 +139,9 @@ func (c *controller) handleDeleteEndpoint(obj interface{}) {
 			return
 		}
 	}
-	if ep.Name == "app2" {
-		c.proxy.DeleteEndpoints(ep)
-	}
+	//	if ep.Name == "app2" {
+	c.proxy.DeleteEndpoints(ep)
+	//	}
 }
 
 func (c *controller) Run(stopCh <-chan struct{}) error {
