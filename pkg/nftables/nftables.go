@@ -25,6 +25,7 @@ type NFTInterface struct {
 	CIv6            nftableslib.ChainsInterface
 	SIv4            nftableslib.SetsInterface
 	SIv6            nftableslib.SetsInterface
+	sets            map[string]*nftables.Set
 }
 
 // Rule defines nftables chain name, rule and once programmed, rule id
@@ -73,11 +74,13 @@ func InitNFTables(clusterCIDRIPv4, clusterCIDRIPv6 string) (*NFTInterface, error
 	if err != nil {
 		return nil, err
 	}
+	nfti.ClusterCidrIpv4 = clusterCIDRIPv4
+	nfti.ClusterCidrIpv6 = clusterCIDRIPv6
+	nfti.sets = make(map[string]*nftables.Set)
+
 	if err := programCommonChainsRules(nfti, clusterCIDRIPv4, clusterCIDRIPv6); err != nil {
 		return nil, err
 	}
-	nfti.ClusterCidrIpv4 = clusterCIDRIPv4
-	nfti.ClusterCidrIpv6 = clusterCIDRIPv6
 
 	return nfti, nil
 }
