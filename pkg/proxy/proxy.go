@@ -102,11 +102,13 @@ func (p *proxy) addServicePortToSets(servicePort ServicePort, tableFamily utilnf
 			}
 		}
 	}
-	if nodePort := servicePort.NodePort(); nodePort != 0 {
-		if err := nftables.AddToNodeportSet(p.nfti, tableFamily, proto, port, nftables.K8sSvcPrefix+svcID); err != nil {
-			return err
-		}
-	}
+	// TODO Re-enable after issue with adding element to nodeport sets of type "inet_proto . inet_service : verdict"
+	// is resolved
+	//	if nodePort := servicePort.NodePort(); nodePort != 0 {
+	//		if err := nftables.AddToNodeportSet(p.nfti, tableFamily, proto, port, nftables.K8sSvcPrefix+svcID); err != nil {
+	//			return err
+	//		}
+	//	}
 
 	return nil
 }
