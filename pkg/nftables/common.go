@@ -28,11 +28,12 @@ const (
 	K8sNATNodeports   = "k8s-nat-nodeports"
 	K8sNATPostrouting = "k8s-nat-postrouting"
 
-	k8sNoEndpointsSet    = "no-endpoints"
-	k8sMarkMasqSet       = "do-mark-masq"
-	k8sClusterIPSet      = "cluster-ip"
-	k8sExternalIPSet     = "external-ip"
-	k8sLoadbalancerIPSet = "loadbalancer-ip"
+	K8sNoEndpointsSet    = "no-endpoints"
+	K8sNodeportSet       = "nodeports"
+	K8sMarkMasqSet       = "do-mark-masq"
+	K8sClusterIPSet      = "cluster-ip"
+	K8sExternalIPSet     = "external-ip"
+	K8sLoadbalancerIPSet = "loadbalancer-ip"
 
 	K8sSvcPrefix = "k8s-nfproxy-svc-"
 	K8sFwPrefix  = "k8s-nfproxy-fw-"
@@ -243,8 +244,17 @@ func setupStaticNATRules(sets map[string]*nftables.Set, ci nftableslib.ChainsInt
 		},
 	}
 
-	// TODO This rule should be added only if masquarade-all flag is set
+	nodeportConcatElements := []*nftableslib.ConcatElement{
+		&nftableslib.ConcatElement{
+			EType: nftables.TypeInetProto,
+		},
+		&nftableslib.ConcatElement{
+			EType: nftables.TypeInetService,
+		},
+	}
+
 	staticServiceRules := []nftableslib.Rule{
+		// TODO This rule should be added only if masquarade-all flag is set
 		{
 			L3: &nftableslib.L3Rule{
 				Src: &nftableslib.IPAddrSpec{
@@ -258,20 +268,36 @@ func setupStaticNATRules(sets map[string]*nftables.Set, ci nftableslib.ChainsInt
 			Concat: &nftableslib.Concat{
 				VMap: true,
 				SetRef: &nftableslib.SetRef{
-					Name:  sets[k8sClusterIPSet].Name,
-					ID:    sets[k8sClusterIPSet].ID,
+					Name:  sets[K8sClusterIPSet].Name,
+					ID:    sets[K8sClusterIPSet].ID,
 					IsMap: true,
 				},
 				Elements: concatElements,
 			},
 		},
-	}
-	if _, err := programChainRules(ci, K8sNATServices, staticServiceRules, 0); err != nil {
-		return err
-	}
-
-	// -A KUBE-SERVICES -m comment --comment "kubernetes service nodeports; NOTE: this must be the last rule in this chain" -m addrtype --dst-type LOCAL -j KUBE-NODEPORTS
-	k8sServiceLastRule := []nftableslib.Rule{
+		{
+			Concat: &nftableslib.Concat{
+				VMap: true,
+				SetRef: &nftableslib.SetRef{
+					Name:  sets[K8sExternalIPSet].Name,
+					ID:    sets[K8sExternalIPSet].ID,
+					IsMap: true,
+				},
+				Elements: concatElements,
+			},
+		},
+		{
+			Concat: &nftableslib.Concat{
+				VMap: true,
+				SetRef: &nftableslib.SetRef{
+					Name:  sets[K8sLoadbalancerIPSet].Name,
+					ID:    sets[K8sLoadbalancerIPSet].ID,
+					IsMap: true,
+				},
+				Elements: concatElements,
+			},
+		},
+		// Must be the last rule
 		{
 			Fib: &nftableslib.Fib{
 				ResultADDRTYPE: true,
@@ -282,8 +308,24 @@ func setupStaticNATRules(sets map[string]*nftables.Set, ci nftableslib.ChainsInt
 			Action:   setActionVerdict(unix.NFT_JUMP, K8sNATNodeports),
 		},
 	}
+	if _, err := programChainRules(ci, K8sNATServices, staticServiceRules, 0); err != nil {
+		return err
+	}
 
-	if _, err := programChainRules(ci, K8sNATServices, k8sServiceLastRule, 0); err != nil {
+	staticNodeportRules := []nftableslib.Rule{
+		{
+			Concat: &nftableslib.Concat{
+				VMap: true,
+				SetRef: &nftableslib.SetRef{
+					Name:  sets[K8sNodeportSet].Name,
+					ID:    sets[K8sNodeportSet].ID,
+					IsMap: true,
+				},
+				Elements: nodeportConcatElements,
+			},
+		},
+	}
+	if _, err := programChainRules(ci, K8sNATNodeports, staticNodeportRules, 0); err != nil {
 		return err
 	}
 
@@ -308,8 +350,8 @@ func setupStaticNATRules(sets map[string]*nftables.Set, ci nftableslib.ChainsInt
 			Concat: &nftableslib.Concat{
 				VMap: true,
 				SetRef: &nftableslib.SetRef{
-					Name:  sets[k8sMarkMasqSet].Name,
-					ID:    sets[k8sMarkMasqSet].ID,
+					Name:  sets[K8sMarkMasqSet].Name,
+					ID:    sets[K8sMarkMasqSet].ID,
 					IsMap: true,
 				},
 				Elements: concatElements,
@@ -499,8 +541,8 @@ func setupK8sFilterRules(sets map[string]*nftables.Set, ci nftableslib.ChainsInt
 			Concat: &nftableslib.Concat{
 				VMap: true,
 				SetRef: &nftableslib.SetRef{
-					Name:  sets[k8sNoEndpointsSet].Name,
-					ID:    sets[k8sNoEndpointsSet].ID,
+					Name:  sets[K8sNoEndpointsSet].Name,
+					ID:    sets[K8sNoEndpointsSet].ID,
 					IsMap: true,
 				},
 				Elements: concatElements,
@@ -520,7 +562,7 @@ func setupCommonSets(sets map[string]*nftables.Set, si nftableslib.SetsInterface
 	if ipv6 {
 		dataType = nftables.TypeIP6Addr
 	}
-	for _, setName := range []string{k8sNoEndpointsSet, k8sMarkMasqSet, k8sClusterIPSet, k8sExternalIPSet, k8sLoadbalancerIPSet} {
+	for _, setName := range []string{K8sNoEndpointsSet, K8sMarkMasqSet, K8sClusterIPSet, K8sExternalIPSet, K8sLoadbalancerIPSet} {
 		s := nftableslib.SetAttributes{
 			Name:     setName,
 			Constant: false,
@@ -536,6 +578,20 @@ func setupCommonSets(sets map[string]*nftables.Set, si nftableslib.SetsInterface
 		}
 		sets[setName] = set
 	}
+	// Create set for nodeports
+	s := nftableslib.SetAttributes{
+		Name:     K8sNodeportSet,
+		Constant: false,
+		IsMap:    true,
+		KeyType:  nftableslib.GenSetKeyType(nftables.TypeInetProto, nftables.TypeInetService),
+		DataType: nftables.TypeVerdict,
+	}
+	set, err := si.Sets().CreateSet(&s, nil)
+	if err != nil {
+		return fmt.Errorf("failed to create set %s with error: %+v", K8sNodeportSet, err)
+	}
+	sets[K8sNodeportSet] = set
+
 	return nil
 }
 
