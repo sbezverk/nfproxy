@@ -168,7 +168,7 @@ func setupNFProxyChains(ci nftableslib.ChainsInterface) error {
 	return nil
 }
 
-func setupStaticNATRules(sets map[string]*nftables.Set, ci nftableslib.ChainsInterface, cidr string) error {
+func setupStaticNATRules(sets map[string]*nftables.Set, ci nftableslib.ChainsInterface, cidr string, ipv6 bool) error {
 	preroutingRules := []nftableslib.Rule{
 		{
 			// -A PREROUTING -m comment --comment "kubernetes service portals" -j KUBE-SERVICES
@@ -231,13 +231,17 @@ func setupStaticNATRules(sets map[string]*nftables.Set, ci nftableslib.ChainsInt
 		return err
 	}
 
+	var dataType nftables.SetDatatype
+	dataType = nftables.TypeIPAddr
+	if ipv6 {
+		dataType = nftables.TypeIP6Addr
+	}
 	concatElements := []*nftableslib.ConcatElement{
-		// TODO uncomment when set type changes
-		//		&nftableslib.ConcatElement{
-		//			EType: nftables.TypeInetProto,
-		//		},
 		&nftableslib.ConcatElement{
-			EType: nftables.TypeIPAddr,
+			EType: nftables.TypeInetProto,
+		},
+		&nftableslib.ConcatElement{
+			EType: dataType,
 		},
 		&nftableslib.ConcatElement{
 			EType: nftables.TypeInetService,
@@ -526,16 +530,17 @@ func setupK8sFilterRules(sets map[string]*nftables.Set, ci nftableslib.ChainsInt
 	if ipv6 {
 		dataType = nftables.TypeIP6Addr
 	}
-	concatElements := make([]*nftableslib.ConcatElement, 0)
-	concatElements = append(concatElements,
+	concatElements := []*nftableslib.ConcatElement{
+		&nftableslib.ConcatElement{
+			EType: nftables.TypeInetProto,
+		},
 		&nftableslib.ConcatElement{
 			EType: dataType,
 		},
 		&nftableslib.ConcatElement{
-			EType:  nftables.TypeInetService,
-			EProto: unix.IPPROTO_TCP,
+			EType: nftables.TypeInetService,
 		},
-	)
+	}
 	servicesRules := []nftableslib.Rule{
 		{
 			Concat: &nftableslib.Concat{
@@ -567,9 +572,7 @@ func setupCommonSets(sets map[string]*nftables.Set, si nftableslib.SetsInterface
 			Name:     setName,
 			Constant: false,
 			IsMap:    true,
-			// TODO (sbezverk) Once the issue https://bugzilla.netfilter.org/show_bug.cgi?id=1395 is addressed
-			// switch to nftables.TypeInetProto, dataType,nftables.TypeInetService
-			KeyType:  nftableslib.GenSetKeyType(dataType, nftables.TypeInetService),
+			KeyType:  nftableslib.GenSetKeyType(nftables.TypeInetProto, dataType, nftables.TypeInetService),
 			DataType: nftables.TypeVerdict,
 		}
 		set, err := si.Sets().CreateSet(&s, nil)
@@ -623,7 +626,7 @@ func programCommonChainsRules(nfti *NFTInterface, clusterCIDRIPv4, clusterCIDRIP
 			if err := setupK8sFilterRules(nfti.sets, ci, ipv6); err != nil {
 				return err
 			}
-			if err := setupStaticNATRules(nfti.sets, ci, clusterCIDR); err != nil {
+			if err := setupStaticNATRules(nfti.sets, ci, clusterCIDR, ipv6); err != nil {
 				return err
 			}
 		}

@@ -15,6 +15,6 @@ Meaning that the number of rules in one chain will not correlate to a number of 
 This principle will limit applications of nfproxy, but on the other hand for the cases where nfproxy
 can be used, it will offer superior performance and scalability when comparing with kube-proxy (iptables) implementation.
 
-**NOTE:** It is WIP, expect a lot of changes, I really mean a lot, as some functionalities are in a design phase. 
-There are some outstanding dependecies on fixes in netfilter's nftables libraries.
+**NOTE:** It is WIP, please expect rather high volume of changes.
 
+**Contributors, reviewers, testers are welcome!!!**

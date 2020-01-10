@@ -269,8 +269,9 @@ func AddToSet(nfti *NFTInterface, tableFamily nftables.TableFamily, proto v1.Pro
 	}
 	se := []nftables.SetElement{}
 	ra := setActionVerdict(unix.NFT_JUMP, chain)
-	element, err := nftableslib.MakeConcatElement([]nftables.SetDatatype{dataType, nftables.TypeInetService},
-		[]nftableslib.ElementValue{{IPAddr: ipaddr}, {InetService: &port}}, ra)
+	protoB := protoByteFromV1Proto(proto)
+	element, err := nftableslib.MakeConcatElement([]nftables.SetDatatype{nftables.TypeInetProto, dataType, nftables.TypeInetService},
+		[]nftableslib.ElementValue{{InetProto: &protoB}, {IPAddr: ipaddr}, {InetService: &port}}, ra)
 	if err != nil {
 		return fmt.Errorf("failed to create a concat element with error: %+v", err)
 	}
@@ -307,8 +308,9 @@ func RemoveFromSet(nfti *NFTInterface, tableFamily nftables.TableFamily, proto v
 
 	se := []nftables.SetElement{}
 	ra := setActionVerdict(unix.NFT_JUMP, chain)
-	element, err := nftableslib.MakeConcatElement([]nftables.SetDatatype{dataType, nftables.TypeInetService},
-		[]nftableslib.ElementValue{{IPAddr: ipaddr}, {InetService: &port}}, ra)
+	protoB := protoByteFromV1Proto(proto)
+	element, err := nftableslib.MakeConcatElement([]nftables.SetDatatype{nftables.TypeInetProto, dataType, nftables.TypeInetService},
+		[]nftableslib.ElementValue{{InetProto: &protoB}, {IPAddr: ipaddr}, {InetService: &port}}, ra)
 	if err != nil {
 		return fmt.Errorf("failed to create a concat element with error: %+v", err)
 	}
