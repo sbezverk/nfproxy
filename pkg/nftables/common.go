@@ -10,24 +10,30 @@ import (
 )
 
 const (
-	FilterInput       = "nfproxy-filter-input"
-	FilterOutput      = "nfproxy-filter-output"
-	FilterForward     = "nfproxy-filter-forward"
-	K8sFilterFirewall = "k8s-nfproxy-filter-firewall"
-	K8sFilterServices = "k8s-nfproxy-filter-services"
-	K8sFilterForward  = "k8s-nfproxy-filter-forward"
-	K8sFilterDoReject = "k8s-nfproxy-filter-do-reject"
+	FilterInput       = "filter-input"
+	FilterOutput      = "filter-output"
+	FilterForward     = "filter-forward"
+	K8sFilterFirewall = "k8s-filter-firewall"
+	K8sFilterServices = "k8s-filter-services"
+	K8sFilterForward  = "k8s-filter-forward"
+	K8sFilterDoReject = "k8s-filter-do-reject"
 
-	NatPrerouting     = "nfproxy-nat-preroutin"
-	NatOutput         = "nfproxy-nat-output"
-	NatPostrouting    = "nfproxy-nat-postrouting"
-	K8sNATMarkDrop    = "k8s-nfproxy-nat-mark-drop"
-	K8sNATMarkMasq    = "k8s-nfproxy-nat-mark-masq"
-	K8sNATServices    = "k8s-nfproxy-nat-services"
-	K8sNATNodeports   = "k8s-nfproxy-nat-nodeports"
-	K8sNATPostrouting = "k8s-nfproxy-nat-postrouting"
+	NatPrerouting     = "nat-preroutin"
+	NatOutput         = "nat-output"
+	NatPostrouting    = "nat-postrouting"
+	K8sNATMarkDrop    = "k8s-nat-mark-drop"
+	K8sNATDoMarkMasq  = "k8s-nat-do-mark-masq"
+	K8sNATMarkMasq    = "k8s-nat-mark-masq"
+	K8sNATServices    = "k8s-nat-services"
+	K8sNATNodeports   = "k8s-nat-nodeports"
+	K8sNATPostrouting = "k8s-nat-postrouting"
 
-	k8sNoEndpointsSet = "no-endpoints-services"
+	K8sNoEndpointsSet    = "no-endpoints"
+	K8sNodeportSet       = "nodeports"
+	K8sMarkMasqSet       = "do-mark-masq"
+	K8sClusterIPSet      = "cluster-ip"
+	K8sExternalIPSet     = "external-ip"
+	K8sLoadbalancerIPSet = "loadbalancer-ip"
 
 	K8sSvcPrefix = "k8s-nfproxy-svc-"
 	K8sFwPrefix  = "k8s-nfproxy-fw-"
@@ -133,6 +139,14 @@ func setupNFProxyChains(ci nftableslib.ChainsInterface) error {
 			attrs: nil,
 		},
 		{
+			name:  K8sNATDoMarkMasq,
+			attrs: nil,
+		},
+		{
+			name:  K8sNATMarkMasq,
+			attrs: nil,
+		},
+		{
 			name:  K8sNATServices,
 			attrs: nil,
 		},
@@ -154,7 +168,7 @@ func setupNFProxyChains(ci nftableslib.ChainsInterface) error {
 	return nil
 }
 
-func setupInitialNATRules(ci nftableslib.ChainsInterface) error {
+func setupStaticNATRules(sets map[string]*nftables.Set, ci nftableslib.ChainsInterface, cidr string) error {
 	preroutingRules := []nftableslib.Rule{
 		{
 			// -A PREROUTING -m comment --comment "kubernetes service portals" -j KUBE-SERVICES
@@ -217,8 +231,73 @@ func setupInitialNATRules(ci nftableslib.ChainsInterface) error {
 		return err
 	}
 
-	// -A KUBE-SERVICES -m comment --comment "kubernetes service nodeports; NOTE: this must be the last rule in this chain" -m addrtype --dst-type LOCAL -j KUBE-NODEPORTS
-	k8sServiceLastRule := []nftableslib.Rule{
+	concatElements := []*nftableslib.ConcatElement{
+		// TODO uncomment when set type changes
+		//		&nftableslib.ConcatElement{
+		//			EType: nftables.TypeInetProto,
+		//		},
+		&nftableslib.ConcatElement{
+			EType: nftables.TypeIPAddr,
+		},
+		&nftableslib.ConcatElement{
+			EType: nftables.TypeInetService,
+		},
+	}
+
+	nodeportConcatElements := []*nftableslib.ConcatElement{
+		&nftableslib.ConcatElement{
+			EType: nftables.TypeInetProto,
+		},
+		&nftableslib.ConcatElement{
+			EType: nftables.TypeInetService,
+		},
+	}
+
+	staticServiceRules := []nftableslib.Rule{
+		// TODO This rule should be added only if masquarade-all flag is set
+		{
+			L3: &nftableslib.L3Rule{
+				Src: &nftableslib.IPAddrSpec{
+					RelOp: nftableslib.NEQ,
+					List:  []*nftableslib.IPAddr{setIPAddr(cidr)},
+				},
+			},
+			Action: setActionVerdict(unix.NFT_JUMP, K8sNATMarkMasq),
+		},
+		{
+			Concat: &nftableslib.Concat{
+				VMap: true,
+				SetRef: &nftableslib.SetRef{
+					Name:  sets[K8sClusterIPSet].Name,
+					ID:    sets[K8sClusterIPSet].ID,
+					IsMap: true,
+				},
+				Elements: concatElements,
+			},
+		},
+		{
+			Concat: &nftableslib.Concat{
+				VMap: true,
+				SetRef: &nftableslib.SetRef{
+					Name:  sets[K8sExternalIPSet].Name,
+					ID:    sets[K8sExternalIPSet].ID,
+					IsMap: true,
+				},
+				Elements: concatElements,
+			},
+		},
+		{
+			Concat: &nftableslib.Concat{
+				VMap: true,
+				SetRef: &nftableslib.SetRef{
+					Name:  sets[K8sLoadbalancerIPSet].Name,
+					ID:    sets[K8sLoadbalancerIPSet].ID,
+					IsMap: true,
+				},
+				Elements: concatElements,
+			},
+		},
+		// Must be the last rule
 		{
 			Fib: &nftableslib.Fib{
 				ResultADDRTYPE: true,
@@ -229,15 +308,67 @@ func setupInitialNATRules(ci nftableslib.ChainsInterface) error {
 			Action:   setActionVerdict(unix.NFT_JUMP, K8sNATNodeports),
 		},
 	}
+	if _, err := programChainRules(ci, K8sNATServices, staticServiceRules, 0); err != nil {
+		return err
+	}
 
-	if _, err := programChainRules(ci, K8sNATServices, k8sServiceLastRule, 0); err != nil {
+	staticNodeportRules := []nftableslib.Rule{
+		{
+			Concat: &nftableslib.Concat{
+				VMap: true,
+				SetRef: &nftableslib.SetRef{
+					Name:  sets[K8sNodeportSet].Name,
+					ID:    sets[K8sNodeportSet].ID,
+					IsMap: true,
+				},
+				Elements: nodeportConcatElements,
+			},
+		},
+	}
+	if _, err := programChainRules(ci, K8sNATNodeports, staticNodeportRules, 0); err != nil {
+		return err
+	}
+
+	// Marking for Masq rule, it will mark the packet and then return to the calling chain
+	doMarkMasqRules := []nftableslib.Rule{
+		{
+			Meta: &nftableslib.Meta{
+				Mark: &nftableslib.MetaMark{
+					Set:   true,
+					Value: 0x4000,
+				},
+			},
+			Action: setActionVerdict(unix.NFT_RETURN),
+		},
+	}
+	if _, err := programChainRules(ci, K8sNATDoMarkMasq, doMarkMasqRules, 0); err != nil {
+		return err
+	}
+
+	masqRules := []nftableslib.Rule{
+		{
+			Concat: &nftableslib.Concat{
+				VMap: true,
+				SetRef: &nftableslib.SetRef{
+					Name:  sets[K8sMarkMasqSet].Name,
+					ID:    sets[K8sMarkMasqSet].ID,
+					IsMap: true,
+				},
+				Elements: concatElements,
+			},
+		},
+		{
+			Action: setActionVerdict(unix.NFT_RETURN),
+		},
+	}
+	if _, err := programChainRules(ci, K8sNATMarkMasq, masqRules, 0); err != nil {
 		return err
 	}
 
 	return nil
 }
 
-func setupInitialFilterRules(ci nftableslib.ChainsInterface, clusterCIDR string) error {
+func setupStaticFilterRules(ci nftableslib.ChainsInterface, clusterCIDR string) error {
 	inputRules := []nftableslib.Rule{
 		{
 			// -A INPUT -m conntrack --ctstate NEW -m comment --comment "kubernetes service portals" -j KUBE-SERVICES
@@ -389,23 +520,11 @@ func setupInitialFilterRules(ci nftableslib.ChainsInterface, clusterCIDR string)
 	return nil
 }
 
-func setupK8sFilterRules(si nftableslib.SetsInterface, ci nftableslib.ChainsInterface, ipv6 bool) error {
+func setupK8sFilterRules(sets map[string]*nftables.Set, ci nftableslib.ChainsInterface, ipv6 bool) error {
 	var dataType nftables.SetDatatype
 	dataType = nftables.TypeIPAddr
 	if ipv6 {
 		dataType = nftables.TypeIP6Addr
-	}
-	noEndpointSet := nftableslib.SetAttributes{
-		Name:     k8sNoEndpointsSet,
-		Constant: false,
-		IsMap:    true,
-		KeyType:  nftableslib.GenSetKeyType(dataType, nftables.TypeInetService),
-		DataType: nftables.TypeVerdict,
-	}
-	neSet, err := si.Sets().CreateSet(&noEndpointSet, nil)
-	if err != nil {
-		return fmt.Errorf("failed to create a set of svc ports without endpoints with error: %+v", err)
-
 	}
 	concatElements := make([]*nftableslib.ConcatElement, 0)
 	concatElements = append(concatElements,
@@ -422,8 +541,8 @@ func setupK8sFilterRules(si nftableslib.SetsInterface, ci nftableslib.ChainsInte
 			Concat: &nftableslib.Concat{
 				VMap: true,
 				SetRef: &nftableslib.SetRef{
-					Name:  neSet.Name,
-					ID:    neSet.ID,
+					Name:  sets[K8sNoEndpointsSet].Name,
+					ID:    sets[K8sNoEndpointsSet].ID,
 					IsMap: true,
 				},
 				Elements: concatElements,
@@ -433,6 +552,45 @@ func setupK8sFilterRules(si nftableslib.SetsInterface, ci nftableslib.ChainsInte
 	if _, err := programChainRules(ci, K8sFilterServices, servicesRules, 0); err != nil {
 		return err
 	}
+
+	return nil
+}
+
+func setupCommonSets(sets map[string]*nftables.Set, si nftableslib.SetsInterface, ipv6 bool) error {
+	var dataType nftables.SetDatatype
+	dataType = nftables.TypeIPAddr
+	if ipv6 {
+		dataType = nftables.TypeIP6Addr
+	}
+	for _, setName := range []string{K8sNoEndpointsSet, K8sMarkMasqSet, K8sClusterIPSet, K8sExternalIPSet, K8sLoadbalancerIPSet} {
+		s := nftableslib.SetAttributes{
+			Name:     setName,
+			Constant: false,
+			IsMap:    true,
+			// TODO (sbezverk) Once the issue https://bugzilla.netfilter.org/show_bug.cgi?id=1395 is addressed
+			// switch to nftables.TypeInetProto, dataType,nftables.TypeInetService
+			KeyType:  nftableslib.GenSetKeyType(dataType, nftables.TypeInetService),
+			DataType: nftables.TypeVerdict,
+		}
+		set, err := si.Sets().CreateSet(&s, nil)
+		if err != nil {
+			return fmt.Errorf("failed to create set %s with error: %+v", setName, err)
+		}
+		sets[setName] = set
+	}
+	// Create set for nodeports
+	s := nftableslib.SetAttributes{
+		Name:     K8sNodeportSet,
+		Constant: false,
+		IsMap:    true,
+		KeyType:  nftableslib.GenSetKeyType(nftables.TypeInetProto, nftables.TypeInetService),
+		DataType: nftables.TypeVerdict,
+	}
+	set, err := si.Sets().CreateSet(&s, nil)
+	if err != nil {
+		return fmt.Errorf("failed to create set %s with error: %+v", K8sNodeportSet, err)
+	}
+	sets[K8sNodeportSet] = set
 
 	return nil
 }
@@ -456,13 +614,16 @@ func programCommonChainsRules(nfti *NFTInterface, clusterCIDRIPv4, clusterCIDRIP
 			if err := setupNFProxyChains(ci); err != nil {
 				return err
 			}
-			if err := setupInitialFilterRules(ci, clusterCIDR); err != nil {
+			if err := setupCommonSets(nfti.sets, si, ipv6); err != nil {
 				return err
 			}
-			if err := setupK8sFilterRules(si, ci, ipv6); err != nil {
+			if err := setupStaticFilterRules(ci, clusterCIDR); err != nil {
 				return err
 			}
-			if err := setupInitialNATRules(ci); err != nil {
+			if err := setupK8sFilterRules(nfti.sets, ci, ipv6); err != nil {
+				return err
+			}
+			if err := setupStaticNATRules(nfti.sets, ci, clusterCIDR); err != nil {
 				return err
 			}
 		}

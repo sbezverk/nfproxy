@@ -1,7 +1,6 @@
 package proxy
 
 import (
-	"fmt"
 	"reflect"
 	"sync"
 
@@ -68,23 +67,108 @@ func (p *proxy) AddService(svc *v1.Service) {
 	}
 }
 
-// addToNoEndpointsList adds to No Endpoints List all IPs/port pairs of a specific servicePort
-func (p *proxy) addToNoEndpointsList(servicePort ServicePort, tableFamily utilnftables.TableFamily) error {
-	proto := string(servicePort.Protocol())
+// addServicePortToSets adds Service Port's Proto.Daddr.Port to cluster ip set, external ip set and
+// loadbalance ip set.
+func (p *proxy) addServicePortToSets(servicePort ServicePort, tableFamily utilnftables.TableFamily, svcID string) error {
+	proto := servicePort.Protocol()
 	port := uint16(servicePort.Port())
-	if err := nftables.AddToNoEndpointsList(p.nfti, tableFamily, proto, servicePort.ClusterIP().String(), port); err != nil {
+	clusterIP := servicePort.ClusterIP().String()
+	// cluster IP needs to be added to 2 sets, to K8sClusterIPSet and if masquarade-all is true
+	// then it needs to be added to K8sMarkMasqSet
+	if err := nftables.AddToSet(p.nfti, tableFamily, proto, clusterIP, port, nftables.K8sClusterIPSet, nftables.K8sSvcPrefix+svcID); err != nil {
 		return err
 	}
+	if err := nftables.AddToSet(p.nfti, tableFamily, proto, clusterIP, port, nftables.K8sMarkMasqSet, nftables.K8sNATDoMarkMasq); err != nil {
+		return err
+	}
+
 	if extIPs := servicePort.ExternalIPStrings(); len(extIPs) != 0 {
 		for _, extIP := range extIPs {
-			if err := nftables.AddToNoEndpointsList(p.nfti, tableFamily, proto, extIP, port); err != nil {
+			if err := nftables.AddToSet(p.nfti, tableFamily, proto, extIP, port, nftables.K8sExternalIPSet, nftables.K8sSvcPrefix+svcID); err != nil {
+				return err
+			}
+			if err := nftables.AddToSet(p.nfti, tableFamily, proto, extIP, port, nftables.K8sMarkMasqSet, nftables.K8sNATDoMarkMasq); err != nil {
 				return err
 			}
 		}
 	}
 	if lbIPs := servicePort.LoadBalancerIPStrings(); len(lbIPs) != 0 {
 		for _, lbIP := range lbIPs {
-			if err := nftables.AddToNoEndpointsList(p.nfti, tableFamily, proto, lbIP, port); err != nil {
+			if err := nftables.AddToSet(p.nfti, tableFamily, proto, lbIP, port, nftables.K8sLoadbalancerIPSet, nftables.K8sSvcPrefix+svcID); err != nil {
+				return err
+			}
+			if err := nftables.AddToSet(p.nfti, tableFamily, proto, lbIP, port, nftables.K8sMarkMasqSet, nftables.K8sNATDoMarkMasq); err != nil {
+				return err
+			}
+		}
+	}
+	// TODO Re-enable after issue with adding element to nodeport sets of type "inet_proto . inet_service : verdict"
+	// is resolved
+	//	if nodePort := servicePort.NodePort(); nodePort != 0 {
+	//		if err := nftables.AddToNodeportSet(p.nfti, tableFamily, proto, port, nftables.K8sSvcPrefix+svcID); err != nil {
+	//			return err
+	//		}
+	//	}
+
+	return nil
+}
+
+// addServicePortToSets adds Service Port's Proto.Daddr.Port to cluster ip set, external ip set and
+// loadbalance ip set.
+func (p *proxy) removeServicePortFromSets(servicePort ServicePort, tableFamily utilnftables.TableFamily, svcID string) error {
+	proto := servicePort.Protocol()
+	port := uint16(servicePort.Port())
+	clusterIP := servicePort.ClusterIP().String()
+	// cluster IP needs to be added to 2 sets, to K8sClusterIPSet and if masquarade-all is true
+	// then it needs to be added to K8sMarkMasqSet
+	if err := nftables.RemoveFromSet(p.nfti, tableFamily, proto, clusterIP, port, nftables.K8sClusterIPSet, nftables.K8sSvcPrefix+svcID); err != nil {
+		return err
+	}
+	if err := nftables.RemoveFromSet(p.nfti, tableFamily, proto, clusterIP, port, nftables.K8sMarkMasqSet, nftables.K8sNATDoMarkMasq); err != nil {
+		return err
+	}
+
+	if extIPs := servicePort.ExternalIPStrings(); len(extIPs) != 0 {
+		for _, extIP := range extIPs {
+			if err := nftables.RemoveFromSet(p.nfti, tableFamily, proto, extIP, port, nftables.K8sExternalIPSet, nftables.K8sSvcPrefix+svcID); err != nil {
+				return err
+			}
+			if err := nftables.RemoveFromSet(p.nfti, tableFamily, proto, extIP, port, nftables.K8sMarkMasqSet, nftables.K8sNATDoMarkMasq); err != nil {
+				return err
+			}
+		}
+	}
+	if lbIPs := servicePort.LoadBalancerIPStrings(); len(lbIPs) != 0 {
+		for _, lbIP := range lbIPs {
+			if err := nftables.RemoveFromSet(p.nfti, tableFamily, proto, lbIP, port, nftables.K8sLoadbalancerIPSet, nftables.K8sSvcPrefix+svcID); err != nil {
+				return err
+			}
+			if err := nftables.RemoveFromSet(p.nfti, tableFamily, proto, lbIP, port, nftables.K8sMarkMasqSet, nftables.K8sNATDoMarkMasq); err != nil {
+				return err
+			}
+		}
+	}
+
+	return nil
+}
+
+// addToNoEndpointsList adds to No Endpoints set  all without Endponts Service Port's proto.daddr.port
+func (p *proxy) addToNoEndpointsList(servicePort ServicePort, tableFamily utilnftables.TableFamily) error {
+	proto := servicePort.Protocol()
+	port := uint16(servicePort.Port())
+	if err := nftables.AddToSet(p.nfti, tableFamily, proto, servicePort.ClusterIP().String(), port, nftables.K8sNoEndpointsSet, nftables.K8sFilterDoReject); err != nil {
+		return err
+	}
+	if extIPs := servicePort.ExternalIPStrings(); len(extIPs) != 0 {
+		for _, extIP := range extIPs {
+			if err := nftables.AddToSet(p.nfti, tableFamily, proto, extIP, port, nftables.K8sNoEndpointsSet, nftables.K8sFilterDoReject); err != nil {
+				return err
+			}
+		}
+	}
+	if lbIPs := servicePort.LoadBalancerIPStrings(); len(lbIPs) != 0 {
+		for _, lbIP := range lbIPs {
+			if err := nftables.AddToSet(p.nfti, tableFamily, proto, lbIP, port, nftables.K8sNoEndpointsSet, nftables.K8sFilterDoReject); err != nil {
 				return err
 			}
 		}
@@ -95,21 +179,21 @@ func (p *proxy) addToNoEndpointsList(servicePort ServicePort, tableFamily utilnf
 
 // removeFromNoEndpointsList removes to No Endpoints List all IPs/port pairs of a specific servicePort
 func (p *proxy) removeFromNoEndpointsList(servicePort ServicePort, tableFamily utilnftables.TableFamily) error {
-	proto := string(servicePort.Protocol())
+	proto := servicePort.Protocol()
 	port := uint16(servicePort.Port())
-	if err := nftables.RemoveFromNoEndpointsList(p.nfti, tableFamily, proto, servicePort.ClusterIP().String(), port); err != nil {
+	if err := nftables.RemoveFromSet(p.nfti, tableFamily, proto, servicePort.ClusterIP().String(), port, nftables.K8sNoEndpointsSet, nftables.K8sFilterDoReject); err != nil {
 		return err
 	}
 	if extIPs := servicePort.ExternalIPStrings(); len(extIPs) != 0 {
 		for _, extIP := range extIPs {
-			if err := nftables.RemoveFromNoEndpointsList(p.nfti, tableFamily, proto, extIP, port); err != nil {
+			if err := nftables.RemoveFromSet(p.nfti, tableFamily, proto, extIP, port, nftables.K8sNoEndpointsSet, nftables.K8sFilterDoReject); err != nil {
 				return err
 			}
 		}
 	}
 	if lbIPs := servicePort.LoadBalancerIPStrings(); len(lbIPs) != 0 {
 		for _, lbIP := range lbIPs {
-			if err := nftables.RemoveFromNoEndpointsList(p.nfti, tableFamily, proto, lbIP, port); err != nil {
+			if err := nftables.RemoveFromSet(p.nfti, tableFamily, proto, lbIP, port, nftables.K8sNoEndpointsSet, nftables.K8sFilterDoReject); err != nil {
 				return err
 			}
 		}
@@ -138,62 +222,12 @@ func (p *proxy) addService(svcPortName ServicePortName, servicePort *v1.ServiceP
 	// Creating a set of chains (k8s-nfproxy-svc-{svcID},k8s-nfproxy-fw-{svcID}, k8s-nfproxy-xlb-{svcID}) for a service port
 	if err := nftables.AddServiceChains(p.nfti, tableFamily, svcID); err != nil {
 		klog.Errorf("failed to add service port %s chains with error: %+v", svcPortName.String(), err)
+		return
 	}
-
-	// Programming Service Port's chains with rules
-	// To preserve the order of different type of rules (ClusterIP, External, Loadbalancing) for the same Service Port,
-	// lastSvcRulePosition carries a position where the next rule should be positioned.
-	lastSvcRulePosition := 0
-	cn := nftables.K8sSvcPrefix + svcID
-	// Programming Service's cluster ip
-	if clip := baseSvcInfo.ClusterIP(); clip != nil {
-		id, err := nftables.ProgramServiceClusterIP(p.nfti, tableFamily, cn, clip.String(), baseSvcInfo.Protocol(), baseSvcInfo.Port())
-		if err != nil {
-			klog.Errorf("Failed to program Service %s cluster IP rule with error: %+v", svcPortName.String(), err)
-			return
-		}
-		baseSvcInfo.svcnft.Chains[tableFamily].Chain[nftables.K8sNATServices].RuleID = id
-		lastSvcRulePosition = int(id[len(id)-1])
-	}
-	// Programming Service's node port
-	if np := baseSvcInfo.NodePort(); np != 0 {
-		id, err := nftables.ProgramServiceNodePort(p.nfti, tableFamily, cn, baseSvcInfo.Protocol(), np)
-		if err != nil {
-			klog.Errorf("Failed to program Service %s Nodeport rule with error: %+v", svcPortName.String(), err)
-			return
-		}
-		// Appending rules' IDs generated for Service's Nodeport
-		baseSvcInfo.svcnft.Chains[tableFamily].Chain[nftables.K8sNATNodeports].RuleID = id
-	}
-	// Programming Service's external ips, external IPs rules are appended right after Cluster IP rules
-	if extip := baseSvcInfo.ExternalIPStrings(); len(extip) != 0 {
-		// Position parameter is always a last programmed rule ID
-		id, err := nftables.ProgramServiceExternalIP(p.nfti, tableFamily, cn, extip, baseSvcInfo.Protocol(), baseSvcInfo.Port(), lastSvcRulePosition)
-		if err != nil {
-			klog.Errorf("Failed to program Service %s external IPs rule with error: %+v", svcPortName.String(), err)
-			return
-		}
-		// Appending rules' IDs generated for Service's external IPs
-		baseSvcInfo.svcnft.Chains[tableFamily].Chain[nftables.K8sNATServices].RuleID = append(baseSvcInfo.svcnft.Chains[tableFamily].Chain[nftables.K8sNATServices].RuleID, id...)
-		lastSvcRulePosition = int(id[len(id)-1])
-	}
-	// Programming Service's loadbalancer ips
-	if lbip := baseSvcInfo.LoadBalancerIPStrings(); len(lbip) != 0 {
-		// Programming rules for Service Port's FW chain used by Loadbalancer
-		id, err := nftables.ProgramServiceLoadBalancerFW(p.nfti, tableFamily, svcID)
-		if err != nil {
-			klog.Errorf("Failed to program Service %s loadbalancer FW rules with error: %+v", svcPortName.String(), err)
-			return
-		}
-		baseSvcInfo.svcnft.Chains[tableFamily].Chain[nftables.K8sFwPrefix+svcID].RuleID = id
-		// Position parameter is always a last programmed rule ID
-		id, err = nftables.ProgramServiceLoadBalancerIP(p.nfti, tableFamily, svcID, lbip, baseSvcInfo.Protocol(), baseSvcInfo.Port(), lastSvcRulePosition)
-		if err != nil {
-			klog.Errorf("Failed to program Service %s loadbalancer IP rule with error: %+v", svcPortName.String(), err)
-			return
-		}
-		// Appending rules' IDs generated for Service's Loadbalancer IPs
-		baseSvcInfo.svcnft.Chains[tableFamily].Chain[nftables.K8sNATServices].RuleID = append(baseSvcInfo.svcnft.Chains[tableFamily].Chain[nftables.K8sNATServices].RuleID, id...)
+	// Populting cluster, external and loadbalancer sets with Service Port information
+	if err := p.addServicePortToSets(baseSvcInfo, tableFamily, svcID); err != nil {
+		klog.Errorf("failed to add service port %s to sets with error: %+v", svcPortName.String(), err)
+		return
 	}
 	// If svcPortName does not exist in the map, it will return nil and len of nil would be 0
 	if len(p.endpointsMap[svcPortName]) == 0 {
@@ -204,8 +238,6 @@ func (p *proxy) addService(svcPortName ServicePortName, servicePort *v1.ServiceP
 	}
 	// All services chains/rules are ready, safe to add svcPortName th serviceMap
 	p.serviceMap[svcPortName] = newServiceInfo(servicePort, svc, baseSvcInfo)
-
-	printSvcPortEntry(svcPortName, p.serviceMap)
 }
 
 // getServicePortEndpointChains return a slice of strings containing a specific ServicePortName all endpoints chains
@@ -251,6 +283,11 @@ func (p *proxy) deleteService(svcPortName ServicePortName, servicePort *v1.Servi
 		if err := p.removeFromNoEndpointsList(baseInfo, tableFamily); err != nil {
 			klog.Errorf("failed to remove %s from \"No Endpoints Set\" with error: %+v", svcPortName.String(), err)
 		}
+	}
+	// Remove svcPortName related chains and rules
+	// Populting cluster, external and loadbalancer sets with Service Port information
+	if err := p.removeServicePortFromSets(baseInfo, tableFamily, baseInfo.svcnft.Chains[tableFamily].ServiceID); err != nil {
+		klog.Errorf("failed to remove service port %s to sets with error: %+v", svcPortName.String(), err)
 	}
 	// Remove svcPortName related chains and rules
 	for chain, rules := range baseInfo.svcnft.Chains[tableFamily].Chain {
@@ -423,8 +460,8 @@ func (p *proxy) deleteEndpointRules(ipTableFamily utilnftables.TableFamily, cn s
 			if err := p.addToNoEndpointsList(svc, tableFamily); err != nil {
 				klog.Errorf("failed to add %s to No Endpoints Set with error: %+v", svcPortName.String(), err)
 			} else {
-				// Set service flag that there is no endpoints
 				bsvc := svc.(*serviceInfo)
+				// Set service flag that there is no endpoints
 				bsvc.svcnft.WithEndpoints = false
 			}
 		}
@@ -529,6 +566,7 @@ func isPortInSubset(subsets []v1.EndpointSubset, port *v1.EndpointPort) bool {
 	return false
 }
 
+/*
 func printSvcPortEntry(svcPortName ServicePortName, svc ServiceMap) {
 	se, ok := svc[svcPortName]
 	if !ok {
@@ -543,3 +581,4 @@ func printSvcPortEntry(svcPortName ServicePortName, svc ServiceMap) {
 		}
 	}
 }
+*/

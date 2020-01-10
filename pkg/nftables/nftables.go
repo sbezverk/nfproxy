@@ -25,6 +25,7 @@ type NFTInterface struct {
 	CIv6            nftableslib.ChainsInterface
 	SIv4            nftableslib.SetsInterface
 	SIv6            nftableslib.SetsInterface
+	sets            map[string]*nftables.Set
 }
 
 // Rule defines nftables chain name, rule and once programmed, rule id
@@ -73,11 +74,13 @@ func InitNFTables(clusterCIDRIPv4, clusterCIDRIPv6 string) (*NFTInterface, error
 	if err != nil {
 		return nil, err
 	}
+	nfti.ClusterCidrIpv4 = clusterCIDRIPv4
+	nfti.ClusterCidrIpv6 = clusterCIDRIPv6
+	nfti.sets = make(map[string]*nftables.Set)
+
 	if err := programCommonChainsRules(nfti, clusterCIDRIPv4, clusterCIDRIPv6); err != nil {
 		return nil, err
 	}
-	nfti.ClusterCidrIpv4 = clusterCIDRIPv4
-	nfti.ClusterCidrIpv6 = clusterCIDRIPv6
 
 	return nfti, nil
 }
@@ -235,16 +238,6 @@ func GetSvcChain(tableFamily nftables.TableFamily, svcID string) map[nftables.Ta
 		ServiceID: svcID,
 		Chain:     make(map[string]*Rule),
 	}
-	// k8sNATNodeports chain is used if service has any node ports
-	chain.Chain[K8sNATNodeports] = &Rule{
-		Chain:  K8sNATNodeports,
-		RuleID: nil,
-	}
-	// k8sNATServices is services chain used by all services to expose ips/ports
-	chain.Chain[K8sNATServices] = &Rule{
-		Chain:  K8sNATServices,
-		RuleID: nil,
-	}
 	//  K8sSvcPrefix+svcID is services chain used by a specific service
 	chain.Chain[K8sSvcPrefix+svcID] = &Rule{
 		Chain:  K8sSvcPrefix + svcID,
@@ -263,8 +256,9 @@ func GetSvcChain(tableFamily nftables.TableFamily, svcID string) map[nftables.Ta
 	return chains
 }
 
-// AddToNoEndpointsList adds service's ip and port to No Endpoints Set to reject incoming to the service traffic
-func AddToNoEndpointsList(nfti *NFTInterface, tableFamily nftables.TableFamily, proto string, addr string, port uint16) error {
+// AddToSet adds service's proto.ip.port to a set specified by set parameter
+func AddToSet(nfti *NFTInterface, tableFamily nftables.TableFamily, proto v1.Protocol, addr string, port uint16,
+	set string, chain string) error {
 	si := nfti.SIv4
 	ipaddr := net.ParseIP(addr).To4()
 	dataType := nftables.TypeIPAddr
@@ -274,7 +268,7 @@ func AddToNoEndpointsList(nfti *NFTInterface, tableFamily nftables.TableFamily, 
 		dataType = nftables.TypeIP6Addr
 	}
 	se := []nftables.SetElement{}
-	ra := setActionVerdict(unix.NFT_JUMP, K8sFilterDoReject)
+	ra := setActionVerdict(unix.NFT_JUMP, chain)
 	element, err := nftableslib.MakeConcatElement([]nftables.SetDatatype{dataType, nftables.TypeInetService},
 		[]nftableslib.ElementValue{{IPAddr: ipaddr}, {InetService: &port}}, ra)
 	if err != nil {
@@ -282,26 +276,26 @@ func AddToNoEndpointsList(nfti *NFTInterface, tableFamily nftables.TableFamily, 
 	}
 	se = append(se, *element)
 
-	if err = si.Sets().SetAddElements(k8sNoEndpointsSet, se); err != nil {
+	if err = si.Sets().SetAddElements(set, se); err != nil {
 		// TODO Add logic to retry, for now just error out
 		if errors.Is(err, unix.EBUSY) {
-			klog.Warningf("nfproxy: SetAddElements for %s:%s:%d failed with error: %v", proto, addr, port, errors.Unwrap(err))
+			klog.Warningf("AddToSet for %s:%s:%d failed with error: %v", proto, addr, port, errors.Unwrap(err))
 			return err
 		}
 		if errors.Is(err, unix.EEXIST) {
-			klog.Warningf("nfproxy: SetAddElements for %s:%s:%d already exists", proto, addr, port)
+			klog.Warningf("AddToSet for %s:%s:%d already exists", proto, addr, port)
 			return nil
 		}
-		klog.Errorf("nfproxy: SetAddElements for %s:%s:%d failed with error: %v", proto, addr, port, err)
+		klog.Errorf("AddToSet for %s:%s:%d failed with error: %v", proto, addr, port, err)
 		return err
 	}
 
-	//	klog.Infof("nfproxy: SetAddElements for %s:%s:%d succeeded", proto, addr, port)
 	return nil
 }
 
-// RemoveFromNoEndpointsList removes service's ip and port from No Endpoints Set to allow service's traffic in
-func RemoveFromNoEndpointsList(nfti *NFTInterface, tableFamily nftables.TableFamily, proto string, addr string, port uint16) error {
+// RemoveFromSet removes service's proto.ip.port from a set specified by a parameter set
+func RemoveFromSet(nfti *NFTInterface, tableFamily nftables.TableFamily, proto v1.Protocol, addr string, port uint16,
+	set string, chain string) error {
 	si := nfti.SIv4
 	ipaddr := net.ParseIP(addr).To4()
 	dataType := nftables.TypeIPAddr
@@ -312,7 +306,7 @@ func RemoveFromNoEndpointsList(nfti *NFTInterface, tableFamily nftables.TableFam
 	}
 
 	se := []nftables.SetElement{}
-	ra := setActionVerdict(unix.NFT_JUMP, K8sFilterDoReject)
+	ra := setActionVerdict(unix.NFT_JUMP, chain)
 	element, err := nftableslib.MakeConcatElement([]nftables.SetDatatype{dataType, nftables.TypeInetService},
 		[]nftableslib.ElementValue{{IPAddr: ipaddr}, {InetService: &port}}, ra)
 	if err != nil {
@@ -320,21 +314,86 @@ func RemoveFromNoEndpointsList(nfti *NFTInterface, tableFamily nftables.TableFam
 	}
 	se = append(se, *element)
 
-	if err = si.Sets().SetDelElements(k8sNoEndpointsSet, se); err != nil {
+	if err = si.Sets().SetDelElements(set, se); err != nil {
 		if errors.Is(err, unix.EBUSY) {
 			// TODO Add logic to retry, for now just error out
-			klog.Warningf("nfproxy: SetDelElements for %s:%s:%d failed with error: %v", proto, addr, port, errors.Unwrap(err))
+			klog.Warningf("RemoveFromSet for %s:%s:%d failed with error: %v", proto, addr, port, errors.Unwrap(err))
 			return err
 		}
 		if errors.Is(err, unix.ENOENT) {
-			klog.Warningf("nfproxy: SetDelElements for %s:%s:%d does not exist", proto, addr, port)
+			klog.Warningf("RemoveFromSet for %s:%s:%d does not exist", proto, addr, port)
 			return nil
 		}
-		klog.Errorf("nfproxy: SetDelElements for %s:%s:%d failed with error: %v", proto, addr, port, err)
+		klog.Errorf("RemoveFromSet for %s:%s:%d failed with error: %v", proto, addr, port, err)
 		return err
 	}
 
-	//	klog.Infof("nfproxy: SetDelElements for %s:%s:%d succeeded", proto, addr, port)
+	return nil
+}
+
+// AddToNodeportSet adds service's port to the nodeport set
+func AddToNodeportSet(nfti *NFTInterface, tableFamily nftables.TableFamily, proto v1.Protocol, port uint16, chain string) error {
+	si := nfti.SIv4
+	if tableFamily == nftables.TableFamilyIPv6 {
+		si = nfti.SIv6
+	}
+	se := []nftables.SetElement{}
+	ra := setActionVerdict(unix.NFT_JUMP, chain)
+	protoB := protoByteFromV1Proto(proto)
+	element, err := nftableslib.MakeConcatElement([]nftables.SetDatatype{nftables.TypeInetProto, nftables.TypeInetService},
+		[]nftableslib.ElementValue{{InetProto: &protoB}, {InetService: &port}}, ra)
+	if err != nil {
+		return fmt.Errorf("failed to create a concat element with error: %+v", err)
+	}
+	se = append(se, *element)
+
+	if err = si.Sets().SetAddElements(K8sNodeportSet, se); err != nil {
+		// TODO Add logic to retry, for now just error out
+		if errors.Is(err, unix.EBUSY) {
+			klog.Warningf("AddToNodeportSet for port: %d failed with error: %v", port, errors.Unwrap(err))
+			return err
+		}
+		if errors.Is(err, unix.EEXIST) {
+			klog.Warningf("AddToNodeportSet for port: %d already exists", port)
+			return nil
+		}
+		klog.Errorf("AddToNodeportSet for port: %dfailed with error: %v", port, err)
+		return err
+	}
+
+	return nil
+}
+
+// RemoveFromNodeportSet removes service's proto.ip.port from a set specified by a parameter set
+func RemoveFromNodeportSet(nfti *NFTInterface, tableFamily nftables.TableFamily, proto v1.Protocol, port uint16, chain string) error {
+	si := nfti.SIv4
+	if tableFamily == nftables.TableFamilyIPv6 {
+		si = nfti.SIv6
+	}
+	se := []nftables.SetElement{}
+	ra := setActionVerdict(unix.NFT_JUMP, chain)
+	protoB := protoByteFromV1Proto(proto)
+	element, err := nftableslib.MakeConcatElement([]nftables.SetDatatype{nftables.TypeInetProto, nftables.TypeInetService},
+		[]nftableslib.ElementValue{{InetProto: &protoB}, {InetService: &port}}, ra)
+	if err != nil {
+		return fmt.Errorf("failed to create a concat element with error: %+v", err)
+	}
+	se = append(se, *element)
+
+	if err = si.Sets().SetDelElements(K8sNodeportSet, se); err != nil {
+		// TODO Add logic to retry, for now just error out
+		if errors.Is(err, unix.EBUSY) {
+			klog.Warningf("RemoveFromNodeportSet for port: %d failed with error: %v", port, errors.Unwrap(err))
+			return err
+		}
+		if errors.Is(err, unix.ENOENT) {
+			klog.Warningf("RemoveFromNodeportSet for %s:%s:%d does not exist", proto, port)
+			return nil
+		}
+		klog.Errorf("RemoveFromNodeportSet for port: %dfailed with error: %v", port, err)
+		return err
+	}
+
 	return nil
 }
 
@@ -400,68 +459,6 @@ func ProgramServiceEndpoints(nfti *NFTInterface, tableFamily nftables.TableFamil
 	return []uint64{id}, nil
 }
 
-// ProgramServiceClusterIP programs Service's cluster ip rules in k8sNATServices chain
-func ProgramServiceClusterIP(nfti *NFTInterface, tableFamily nftables.TableFamily, chain string,
-	clusterIP string, proto v1.Protocol, port int) ([]uint64, error) {
-	var err error
-	var id []uint64
-
-	ci := ciForTableFamily(nfti, tableFamily)
-	protoByte := protoByteFromV1Proto(proto)
-	clusterCidr := nfti.ClusterCidrIpv4
-	if tableFamily == nftables.TableFamilyIPv6 {
-		clusterCidr = nfti.ClusterCidrIpv6
-	}
-	clusterIPRules := []nftableslib.Rule{
-		{
-			// -A KUBE-SERVICES ! -s 57.112.0.0/12 -d 57.142.221.21/32 -p tcp -m comment --comment "default/app:http-web cluster IP" -m tcp --dport 80 -j KUBE-MARK-MASQ
-			// -A KUBE-SERVICES -d 57.142.221.21/32 -p tcp -m comment --comment "default/app:http-web cluster IP" -m tcp --dport 80 -j KUBE-SVC-57XVOCFNTLTR3Q27
-			L3: &nftableslib.L3Rule{
-				Src: &nftableslib.IPAddrSpec{
-					RelOp: nftableslib.NEQ,
-					List:  []*nftableslib.IPAddr{setIPAddr(clusterCidr)},
-				},
-				Dst: &nftableslib.IPAddrSpec{
-					List: []*nftableslib.IPAddr{setIPAddr(clusterIP)},
-				},
-			},
-			L4: &nftableslib.L4Rule{
-				L4Proto: protoByte,
-				Dst: &nftableslib.Port{
-					List: nftableslib.SetPortList([]int{port}),
-				},
-			},
-			Meta: &nftableslib.Meta{
-				Mark: &nftableslib.MetaMark{
-					Set:   true,
-					Value: 0x4000,
-				},
-			},
-		},
-		{
-			L3: &nftableslib.L3Rule{
-				Dst: &nftableslib.IPAddrSpec{
-					List: []*nftableslib.IPAddr{setIPAddr(clusterIP)},
-				},
-			},
-			L4: &nftableslib.L4Rule{
-				L4Proto: protoByte,
-				Dst: &nftableslib.Port{
-					List: nftableslib.SetPortList([]int{port}),
-				},
-			},
-			Action: setActionVerdict(unix.NFT_JUMP, chain),
-		},
-	}
-
-	id, err = programClusterIPRules(ci, clusterIPRules)
-	if err != nil {
-		return nil, err
-	}
-
-	return id, nil
-}
-
 func ciForTableFamily(nfti *NFTInterface, tableFamily nftables.TableFamily) nftableslib.ChainsInterface {
 	if tableFamily == nftables.TableFamilyIPv6 {
 		return nfti.CIv6
@@ -483,207 +480,6 @@ func protoByteFromV1Proto(proto v1.Protocol) byte {
 	}
 
 	return protoByte
-}
-
-// ProgramServiceExternalIP programs Service's external ips rules in k8sNATServices chain
-func ProgramServiceExternalIP(nfti *NFTInterface, tableFamily nftables.TableFamily, chain string,
-	externalIP []string, proto v1.Protocol, port int, position int) ([]uint64, error) {
-	var err error
-	var id []uint64
-
-	ci := ciForTableFamily(nfti, tableFamily)
-	protoByte := protoByteFromV1Proto(proto)
-
-	var externalIPRules []nftableslib.Rule
-	// Loop through all external IPs and generate set of rules for each
-	for _, extIP := range externalIP {
-		externalIPRules = append(externalIPRules,
-			nftableslib.Rule{
-				// -A KUBE-SERVICES -d 192.168.80.104/32 -p tcp -m comment --comment "default/portal:portal external IP" -m tcp --dport 8989 -j KUBE-MARK-MASQ
-				L3: &nftableslib.L3Rule{
-					Dst: &nftableslib.IPAddrSpec{
-						List: []*nftableslib.IPAddr{setIPAddr(extIP)},
-					},
-				},
-				L4: &nftableslib.L4Rule{
-					L4Proto: protoByte,
-					Dst: &nftableslib.Port{
-						List: nftableslib.SetPortList([]int{port}),
-					},
-				},
-				Meta: &nftableslib.Meta{
-					Mark: &nftableslib.MetaMark{
-						Set:   true,
-						Value: 0x4000,
-					},
-				},
-			},
-			nftableslib.Rule{
-				// -A KUBE-SERVICES -d 192.168.80.104/32 -p tcp -m comment --comment "default/portal:portal external IP" -m tcp --dport 8989 -m physdev ! --physdev-is-in -m addrtype ! --src-type LOCAL -j KUBE-SVC-MUPXPVK4XAZHSWAR
-				Fib: &nftableslib.Fib{
-					ResultADDRTYPE: true,
-					FlagSADDR:      true,
-					Data:           []byte{unix.RTN_LOCAL},
-					RelOp:          nftableslib.NEQ,
-				},
-				Meta: &nftableslib.Meta{
-					Expr: []nftableslib.MetaExpr{
-						{
-							Key:   unix.NFT_META_IIFNAME,
-							Value: []byte("bridge"),
-							RelOp: nftableslib.NEQ,
-						},
-					},
-				},
-				L3: &nftableslib.L3Rule{
-					Dst: &nftableslib.IPAddrSpec{
-						List: []*nftableslib.IPAddr{setIPAddr(extIP)},
-					},
-				},
-				L4: &nftableslib.L4Rule{
-					L4Proto: protoByte,
-					Dst: &nftableslib.Port{
-						List: nftableslib.SetPortList([]int{port}),
-					},
-				},
-				Action: setActionVerdict(unix.NFT_JUMP, chain),
-			},
-			nftableslib.Rule{
-				// -A KUBE-SERVICES -d 192.168.80.104/32 -p tcp -m comment --comment "default/portal:portal external IP" -m tcp --dport 8989 -m addrtype --dst-type LOCAL -j KUBE-SVC-MUPXPVK4XAZHSWAR
-				Fib: &nftableslib.Fib{
-					ResultADDRTYPE: true,
-					FlagDADDR:      true,
-					Data:           []byte{unix.RTN_LOCAL},
-				},
-				L3: &nftableslib.L3Rule{
-					Dst: &nftableslib.IPAddrSpec{
-						List: []*nftableslib.IPAddr{setIPAddr(extIP)},
-					},
-				},
-				L4: &nftableslib.L4Rule{
-					L4Proto: protoByte,
-					Dst: &nftableslib.Port{
-						List: nftableslib.SetPortList([]int{port}),
-					},
-				},
-				Action: setActionVerdict(unix.NFT_JUMP, chain),
-			})
-	}
-
-	id, err = programChainRules(ci, K8sNATServices, externalIPRules, position)
-	if err != nil {
-		return nil, err
-	}
-
-	return id, nil
-}
-
-// ProgramServiceLoadBalancerIP programs Service's LoadBalancer ips rules in k8sNATServices chain
-func ProgramServiceLoadBalancerIP(nfti *NFTInterface, tableFamily nftables.TableFamily, svcID string,
-	lbIPs []string, proto v1.Protocol, port int, position int) ([]uint64, error) {
-	var err error
-	var id []uint64
-
-	ci := ciForTableFamily(nfti, tableFamily)
-	protoByte := protoByteFromV1Proto(proto)
-
-	var lbIPRules []nftableslib.Rule
-	// Loop through all Load Balancer IPs and generate set of rules for each
-	for _, lbIP := range lbIPs {
-		lbIPRules = append(lbIPRules,
-			nftableslib.Rule{
-				// -A KUBE-SERVICES -d 192.168.180.240/32 -p tcp -m comment --comment "default/app2:http-web2 loadbalancer IP" -m tcp --dport 808 -j KUBE-FW-H77O6A5PM6DG4AKY
-				L3: &nftableslib.L3Rule{
-					Dst: &nftableslib.IPAddrSpec{
-						List: []*nftableslib.IPAddr{setIPAddr(lbIP)},
-					},
-				},
-				L4: &nftableslib.L4Rule{
-					L4Proto: protoByte,
-					Dst: &nftableslib.Port{
-						List: nftableslib.SetPortList([]int{port}),
-					},
-				},
-				Action: setActionVerdict(unix.NFT_JUMP, K8sFwPrefix+svcID),
-			})
-	}
-
-	id, err = programChainRules(ci, K8sNATServices, lbIPRules, position)
-	if err != nil {
-		return nil, err
-	}
-
-	return id, nil
-}
-
-// ProgramServiceLoadBalancerFW programs Service's LoadBalancer FW rules
-func ProgramServiceLoadBalancerFW(nfti *NFTInterface, tableFamily nftables.TableFamily, svcID string) ([]uint64, error) {
-	var err error
-	var id []uint64
-
-	ci := ciForTableFamily(nfti, tableFamily)
-
-	lbIPRules := []nftableslib.Rule{
-		{
-			// -A KUBE-FW-H77O6A5PM6DG4AKY -m comment --comment "default/app2:http-web2 loadbalancer IP" -j KUBE-MARK-MASQ
-			// -A KUBE-FW-H77O6A5PM6DG4AKY -m comment --comment "default/app2:http-web2 loadbalancer IP" -j KUBE-SVC-H77O6A5PM6DG4AKY
-			// -A KUBE-FW-H77O6A5PM6DG4AKY -m comment --comment "default/app2:http-web2 loadbalancer IP" -j KUBE-MARK-DROP
-			Meta: &nftableslib.Meta{
-				Mark: &nftableslib.MetaMark{
-					Set:   true,
-					Value: 0x4000,
-				},
-			},
-			Action: setActionVerdict(unix.NFT_JUMP, K8sSvcPrefix+svcID),
-		},
-		{
-			Action: setActionVerdict(unix.NFT_JUMP, K8sNATMarkDrop),
-		},
-	}
-
-	id, err = programChainRules(ci, K8sFwPrefix+svcID, lbIPRules, 0)
-	if err != nil {
-		return nil, err
-	}
-
-	return id, nil
-}
-
-// ProgramServiceNodePort programs Service's Nodeport in K8sNATNodeports chain
-func ProgramServiceNodePort(nfti *NFTInterface, tableFamily nftables.TableFamily, chain string, proto v1.Protocol, port int) ([]uint64, error) {
-	var err error
-	var id []uint64
-
-	ci := ciForTableFamily(nfti, tableFamily)
-	protoByte := protoByteFromV1Proto(proto)
-
-	var nodeportRules []nftableslib.Rule
-	nodeportRules = append(nodeportRules,
-		nftableslib.Rule{
-			// -A KUBE-NODEPORTS -p tcp -m comment --comment "istio-system/istio-ingressgateway:tls" -m tcp --dport 30725 -j KUBE-MARK-MASQ
-			// -A KUBE-NODEPORTS -p tcp -m comment --comment "istio-system/istio-ingressgateway:tls" -m tcp --dport 30725 -j KUBE-SVC-S4S242M2WNFIAT6Y
-			L4: &nftableslib.L4Rule{
-				L4Proto: protoByte,
-				Dst: &nftableslib.Port{
-					List: nftableslib.SetPortList([]int{port}),
-				},
-			},
-			// If not all nodeports needed to be marked, this block can be done conditionally
-			Meta: &nftableslib.Meta{
-				Mark: &nftableslib.MetaMark{
-					Set:   true,
-					Value: 0x4000,
-				},
-			},
-			Action: setActionVerdict(unix.NFT_JUMP, chain),
-		})
-
-	id, err = programChainRules(ci, K8sNATNodeports, nodeportRules, 0)
-	if err != nil {
-		return nil, err
-	}
-
-	return id, nil
 }
 
 func programClusterIPRules(ci nftableslib.ChainsInterface, rules []nftableslib.Rule) ([]uint64, error) {
