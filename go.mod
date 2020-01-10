@@ -4,7 +4,7 @@ go 1.13
 
 require (
 	github.com/google/nftables v0.0.0-20200101160555-80a905063cf2
-	github.com/sbezverk/nftableslib v0.0.0-20200103182035-d2e4311b623b
+	github.com/sbezverk/nftableslib v0.0.0-20200110170830-83f42f90600c
 	golang.org/x/sys v0.0.0-20191220220014-0732a990476f
 	k8s.io/api v0.17.0
 	k8s.io/apimachinery v0.17.0
