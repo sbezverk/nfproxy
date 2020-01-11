@@ -2,12 +2,15 @@ package proxy
 
 import (
 	"reflect"
+	"strconv"
 	"sync"
 
 	utilnftables "github.com/google/nftables"
 	"github.com/sbezverk/nfproxy/pkg/nftables"
 	v1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/client-go/tools/record"
 	"k8s.io/klog"
 	utilproxy "k8s.io/kubernetes/pkg/proxy/util"
@@ -532,6 +535,65 @@ func (p *proxy) UpdateEndpoints(epOld, epNew *v1.Endpoints) {
 	}
 }
 
+// BootstrapRules programs rules so the controller could reach API server
+// when it runs "in-cluster" mode.
+func BootstrapRules(p Proxy, host string, port string) error {
+	// TODO (sbezverk) Consider adding ip address validation
+	pn, err := strconv.Atoi(port)
+	if err != nil {
+		return err
+	}
+	ipFamily, _ := getIPFamily(host)
+	svc := v1.Service{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "kubernetes",
+			Namespace: "default",
+		},
+		Spec: v1.ServiceSpec{
+			IPFamily: &ipFamily,
+			Ports: []v1.ServicePort{
+				{
+					// TODO (sbezverk) What if it is not secured cluster?
+					Name:       "https",
+					Protocol:   v1.ProtocolTCP,
+					Port:       int32(pn),
+					TargetPort: intstr.FromString(port),
+				},
+			},
+			Type:      v1.ServiceTypeClusterIP,
+			ClusterIP: host,
+		},
+	}
+	endpoint := v1.Endpoints{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "kubernetes",
+			Namespace: "default",
+		},
+		Subsets: []v1.EndpointSubset{
+			{
+				Addresses: []v1.EndpointAddress{
+					{
+						// TODO (sbezverk) find a way to get this IP from environment
+						IP: "192.168.80.104",
+					},
+				},
+				Ports: []v1.EndpointPort{
+					{
+						Name:     "https",
+						Protocol: v1.ProtocolTCP,
+						// TODO (sbezverk) find a way to get this port from environment
+						Port: int32(6443),
+					},
+				},
+			},
+		},
+	}
+	p.AddService(&svc)
+	p.AddEndpoints(&endpoint)
+
+	return nil
+}
+
 func getSvcPortName(name, namespace string, portName string, protocol v1.Protocol) ServicePortName {
 	return ServicePortName{
 		NamespacedName: types.NamespacedName{Namespace: namespace, Name: name},
@@ -563,20 +625,3 @@ func isPortInSubset(subsets []v1.EndpointSubset, port *v1.EndpointPort) bool {
 	}
 	return false
 }
-
-/*
-func printSvcPortEntry(svcPortName ServicePortName, svc ServiceMap) {
-	se, ok := svc[svcPortName]
-	if !ok {
-		return
-	}
-	entry := se.(*serviceInfo)
-	fmt.Printf("Service port name: %s with endpoints: %t service chain name: %s\n", svcPortName.String(), entry.svcnft.WithEndpoints, entry.serviceNameString)
-	for tf, svcchains := range entry.svcnft.Chains {
-		fmt.Printf("Service table family: %+v service id: %s\n", tf, svcchains.ServiceID)
-		for cn, rules := range svcchains.Chain {
-			fmt.Printf("Chain name: %s rules: %+v\n", cn, rules.RuleID)
-		}
-	}
-}
-*/
