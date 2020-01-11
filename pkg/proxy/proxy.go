@@ -537,7 +537,7 @@ func (p *proxy) UpdateEndpoints(epOld, epNew *v1.Endpoints) {
 
 // BootstrapRules programs rules so the controller could reach API server
 // when it runs "in-cluster" mode.
-func BootstrapRules(p Proxy, host string, port string) error {
+func BootstrapRules(p Proxy, host, extAddr string, port string) error {
 	// TODO (sbezverk) Consider adding ip address validation
 	pn, err := strconv.Atoi(port)
 	if err != nil {
@@ -573,8 +573,7 @@ func BootstrapRules(p Proxy, host string, port string) error {
 			{
 				Addresses: []v1.EndpointAddress{
 					{
-						// TODO (sbezverk) find a way to get this IP from environment
-						IP: "192.168.80.104",
+						IP: extAddr,
 					},
 				},
 				Ports: []v1.EndpointPort{

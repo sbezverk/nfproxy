@@ -87,7 +87,12 @@ func main() {
 	host := os.Getenv("KUBERNETES_SERVICE_HOST")
 	port := os.Getenv("KUBERNETES_SERVICE_PORT")
 	if host != "" && port != "" {
-		if err := proxy.BootstrapRules(nfproxy, host, port); err != nil {
+		extAddr := os.Getenv("NFPROXY_IP")
+		if extAddr == "" {
+			klog.Errorf("nfproxy in \"in-cluster\" more requires env variable \"NFPROXY_IP\" to be set to nfproxy pod's IP address")
+			os.Exit(1)
+		}
+		if err := proxy.BootstrapRules(nfproxy, host, extAddr, port); err != nil {
 			klog.Errorf("nfproxy failed to add bootstrap rules with error: %+v", err)
 			os.Exit(1)
 		}
