@@ -82,8 +82,8 @@ func main() {
 
 	// Create new instance of a proxy process
 	nfproxy := proxy.NewProxy(nfti, hostname, recorder)
-	// For "in-cluster" mode a rule to reach API server must be programmed, otherwise a controller
-	// running "in-cluster" cannot reach it.
+	// For "in-cluster" mode a rule to reach API server must be programmed, otherwise
+	// the services/endpoints controller cannot reach it.
 	host := os.Getenv("KUBERNETES_SERVICE_HOST")
 	port := os.Getenv("KUBERNETES_SERVICE_PORT")
 	if host != "" && port != "" {
@@ -100,7 +100,7 @@ func main() {
 
 	controller := controller.NewController(client, nfproxy)
 	if err := controller.Run(wait.NeverStop); err != nil {
-		klog.Errorf("nfproxy failed to start controller with error: %s", err)
+		klog.Errorf("nfproxy failed to start the controller with error: %s", err)
 		os.Exit(1)
 	}
 
