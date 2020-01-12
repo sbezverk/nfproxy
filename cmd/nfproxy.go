@@ -82,10 +82,25 @@ func main() {
 
 	// Create new instance of a proxy process
 	nfproxy := proxy.NewProxy(nfti, hostname, recorder)
+	// For "in-cluster" mode a rule to reach API server must be programmed, otherwise
+	// the services/endpoints controller cannot reach it.
+	host := os.Getenv("KUBERNETES_SERVICE_HOST")
+	port := os.Getenv("KUBERNETES_SERVICE_PORT")
+	if host != "" && port != "" {
+		extAddr := os.Getenv("NFPROXY_IP")
+		if extAddr == "" {
+			klog.Errorf("nfproxy in \"in-cluster\" more requires env variable \"NFPROXY_IP\" to be set to nfproxy pod's IP address")
+			os.Exit(1)
+		}
+		if err := proxy.BootstrapRules(nfproxy, host, extAddr, port); err != nil {
+			klog.Errorf("nfproxy failed to add bootstrap rules with error: %+v", err)
+			os.Exit(1)
+		}
+	}
 
 	controller := controller.NewController(client, nfproxy)
 	if err := controller.Run(wait.NeverStop); err != nil {
-		klog.Errorf("nfproxy failed to start controller with error: %s", err)
+		klog.Errorf("nfproxy failed to start the controller with error: %s", err)
 		os.Exit(1)
 	}
 

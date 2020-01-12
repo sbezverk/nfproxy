@@ -87,6 +87,9 @@ func InitNFTables(clusterCIDRIPv4, clusterCIDRIPv6 string) (*NFTInterface, error
 
 func initNFTables() (nftableslib.TablesInterface, error) {
 	conn := nftableslib.InitConn()
+	// TODO (sbezverk) conn.FlushRuleset() wipes out ALL existing nftables on the host,
+	// see if there is less destructive way to clean up previous mess.
+	conn.FlushRuleset()
 	ti := nftableslib.InitNFTables(conn)
 
 	return ti, nil
@@ -128,13 +131,14 @@ func AddEndpointRules(nfti *NFTInterface, tableFamily nftables.TableFamily, chai
 
 	dnat := &nftableslib.NATAttributes{
 		L3Addr:      [2]*nftableslib.IPAddr{setIPAddr(ipaddr)},
-		Port:        [2]uint16{uint16(port)},
 		FullyRandom: true,
+	}
+	if port != 0 {
+		dnat.Port = [2]uint16{uint16(port)}
 	}
 	dnatAction, _ := nftableslib.SetDNAT(dnat)
 	rules := []nftableslib.Rule{
 		{
-
 			// -A KUBE-SEP-FS3FUULGZPVD4VYB -s 57.112.0.247/32 -j KUBE-MARK-MASQ
 			L3: &nftableslib.L3Rule{
 				Src: &nftableslib.IPAddrSpec{

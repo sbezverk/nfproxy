@@ -101,6 +101,11 @@ spec:
             - "57.112.0.0/12"
             - --ipv6clustercidr
             - ""
+          env:
+            - name: NFPROXY_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.podIP
 metadata:
   name: nfproxy
   namespace: kube-system
