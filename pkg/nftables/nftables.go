@@ -75,10 +75,18 @@ type SVCnft struct {
 // InitNFTables initializes connection to netfilter and instantiates nftables table interface
 func InitNFTables(clusterCIDRIPv4, clusterCIDRIPv6 string) (*NFTInterface, error) {
 	//  Initializing connection to netfilter
-	ti, err := initNFTables()
-	if err != nil {
-		return nil, err
+	ti := initNFTables()
+
+	// TODO (sbezverk) Consider rebuilding data structures based on discovered data
+	if ti.Tables().Exist(nfV4TableName, nftables.TableFamilyIPv4) {
+		// Table already exists, removing it
+		ti.Tables().DeleteImm(nfV4TableName, nftables.TableFamilyIPv4)
 	}
+	if ti.Tables().Exist(nfV6TableName, nftables.TableFamilyIPv6) {
+		// Table already exists, removing it
+		ti.Tables().DeleteImm(nfV6TableName, nftables.TableFamilyIPv6)
+	}
+
 	// Creating required tables for ipv4 and ipv6 families
 	if err := ti.Tables().CreateImm(nfV4TableName, nftables.TableFamilyIPv4); err != nil {
 		return nil, err
@@ -101,14 +109,9 @@ func InitNFTables(clusterCIDRIPv4, clusterCIDRIPv6 string) (*NFTInterface, error
 	return nfti, nil
 }
 
-func initNFTables() (nftableslib.TablesInterface, error) {
+func initNFTables() nftableslib.TablesInterface {
 	conn := nftableslib.InitConn()
-	// TODO (sbezverk) conn.FlushRuleset() wipes out ALL existing nftables on the host,
-	// see if there is less destructive way to clean up previous mess.
-	conn.FlushRuleset()
-	ti := nftableslib.InitNFTables(conn)
-
-	return ti, nil
+	return nftableslib.InitNFTables(conn)
 }
 
 // getNFTInterface returns nftables interfaces to access methods available for
