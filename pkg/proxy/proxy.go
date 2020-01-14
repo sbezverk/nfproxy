@@ -82,144 +82,11 @@ func (p *proxy) AddService(svc *v1.Service) {
 		servicePort := &svc.Spec.Ports[i]
 		svcPortName := getSvcPortName(svc.Name, svc.Namespace, servicePort.Name, servicePort.Protocol)
 		baseSvcInfo := newBaseServiceInfo(servicePort, svc)
-		p.addService(svcPortName, servicePort, svc, baseSvcInfo)
+		p.addServicePort(svcPortName, servicePort, svc, baseSvcInfo)
 	}
 }
 
-// addServicePortToSets adds Service Port's Proto.Daddr.Port to cluster ip set, external ip set and
-// loadbalance ip set.
-func (p *proxy) addServicePortToSets(servicePort ServicePort, tableFamily utilnftables.TableFamily, svcID string) error {
-	proto := servicePort.Protocol()
-	port := uint16(servicePort.Port())
-	clusterIP := servicePort.ClusterIP().String()
-	// cluster IP needs to be added to 2 sets, to K8sClusterIPSet and if masquarade-all is true
-	// then it needs to be added to K8sMarkMasqSet
-	if err := nftables.AddToSet(p.nfti, tableFamily, proto, clusterIP, port, nftables.K8sClusterIPSet, nftables.K8sSvcPrefix+svcID); err != nil {
-		return err
-	}
-	if err := nftables.AddToSet(p.nfti, tableFamily, proto, clusterIP, port, nftables.K8sMarkMasqSet, nftables.K8sNATDoMarkMasq); err != nil {
-		return err
-	}
-
-	if extIPs := servicePort.ExternalIPStrings(); len(extIPs) != 0 {
-		for _, extIP := range extIPs {
-			if err := nftables.AddToSet(p.nfti, tableFamily, proto, extIP, port, nftables.K8sExternalIPSet, nftables.K8sSvcPrefix+svcID); err != nil {
-				return err
-			}
-			if err := nftables.AddToSet(p.nfti, tableFamily, proto, extIP, port, nftables.K8sMarkMasqSet, nftables.K8sNATDoMarkMasq); err != nil {
-				return err
-			}
-		}
-	}
-	if lbIPs := servicePort.LoadBalancerIPStrings(); len(lbIPs) != 0 {
-		for _, lbIP := range lbIPs {
-			if err := nftables.AddToSet(p.nfti, tableFamily, proto, lbIP, port, nftables.K8sLoadbalancerIPSet, nftables.K8sSvcPrefix+svcID); err != nil {
-				return err
-			}
-			if err := nftables.AddToSet(p.nfti, tableFamily, proto, lbIP, port, nftables.K8sMarkMasqSet, nftables.K8sNATDoMarkMasq); err != nil {
-				return err
-			}
-		}
-	}
-	if nodePort := servicePort.NodePort(); nodePort != 0 {
-		if err := nftables.AddToNodeportSet(p.nfti, tableFamily, proto, uint16(nodePort), nftables.K8sSvcPrefix+svcID); err != nil {
-			return err
-		}
-	}
-
-	return nil
-}
-
-// addServicePortToSets adds Service Port's Proto.Daddr.Port to cluster ip set, external ip set and
-// loadbalance ip set.
-func (p *proxy) removeServicePortFromSets(servicePort ServicePort, tableFamily utilnftables.TableFamily, svcID string) error {
-	proto := servicePort.Protocol()
-	port := uint16(servicePort.Port())
-	clusterIP := servicePort.ClusterIP().String()
-	// cluster IP needs to be added to 2 sets, to K8sClusterIPSet and if masquarade-all is true
-	// then it needs to be added to K8sMarkMasqSet
-	if err := nftables.RemoveFromSet(p.nfti, tableFamily, proto, clusterIP, port, nftables.K8sClusterIPSet, nftables.K8sSvcPrefix+svcID); err != nil {
-		return err
-	}
-	if err := nftables.RemoveFromSet(p.nfti, tableFamily, proto, clusterIP, port, nftables.K8sMarkMasqSet, nftables.K8sNATDoMarkMasq); err != nil {
-		return err
-	}
-
-	if extIPs := servicePort.ExternalIPStrings(); len(extIPs) != 0 {
-		for _, extIP := range extIPs {
-			if err := nftables.RemoveFromSet(p.nfti, tableFamily, proto, extIP, port, nftables.K8sExternalIPSet, nftables.K8sSvcPrefix+svcID); err != nil {
-				return err
-			}
-			if err := nftables.RemoveFromSet(p.nfti, tableFamily, proto, extIP, port, nftables.K8sMarkMasqSet, nftables.K8sNATDoMarkMasq); err != nil {
-				return err
-			}
-		}
-	}
-	if lbIPs := servicePort.LoadBalancerIPStrings(); len(lbIPs) != 0 {
-		for _, lbIP := range lbIPs {
-			if err := nftables.RemoveFromSet(p.nfti, tableFamily, proto, lbIP, port, nftables.K8sLoadbalancerIPSet, nftables.K8sSvcPrefix+svcID); err != nil {
-				return err
-			}
-			if err := nftables.RemoveFromSet(p.nfti, tableFamily, proto, lbIP, port, nftables.K8sMarkMasqSet, nftables.K8sNATDoMarkMasq); err != nil {
-				return err
-			}
-		}
-	}
-
-	return nil
-}
-
-// addToNoEndpointsList adds to No Endpoints set  all without Endponts Service Port's proto.daddr.port
-func (p *proxy) addToNoEndpointsList(servicePort ServicePort, tableFamily utilnftables.TableFamily) error {
-	proto := servicePort.Protocol()
-	port := uint16(servicePort.Port())
-	if err := nftables.AddToSet(p.nfti, tableFamily, proto, servicePort.ClusterIP().String(), port, nftables.K8sNoEndpointsSet, nftables.K8sFilterDoReject); err != nil {
-		return err
-	}
-	if extIPs := servicePort.ExternalIPStrings(); len(extIPs) != 0 {
-		for _, extIP := range extIPs {
-			if err := nftables.AddToSet(p.nfti, tableFamily, proto, extIP, port, nftables.K8sNoEndpointsSet, nftables.K8sFilterDoReject); err != nil {
-				return err
-			}
-		}
-	}
-	if lbIPs := servicePort.LoadBalancerIPStrings(); len(lbIPs) != 0 {
-		for _, lbIP := range lbIPs {
-			if err := nftables.AddToSet(p.nfti, tableFamily, proto, lbIP, port, nftables.K8sNoEndpointsSet, nftables.K8sFilterDoReject); err != nil {
-				return err
-			}
-		}
-	}
-
-	return nil
-}
-
-// removeFromNoEndpointsList removes to No Endpoints List all IPs/port pairs of a specific servicePort
-func (p *proxy) removeFromNoEndpointsList(servicePort ServicePort, tableFamily utilnftables.TableFamily) error {
-	proto := servicePort.Protocol()
-	port := uint16(servicePort.Port())
-	if err := nftables.RemoveFromSet(p.nfti, tableFamily, proto, servicePort.ClusterIP().String(), port, nftables.K8sNoEndpointsSet, nftables.K8sFilterDoReject); err != nil {
-		return err
-	}
-	if extIPs := servicePort.ExternalIPStrings(); len(extIPs) != 0 {
-		for _, extIP := range extIPs {
-			if err := nftables.RemoveFromSet(p.nfti, tableFamily, proto, extIP, port, nftables.K8sNoEndpointsSet, nftables.K8sFilterDoReject); err != nil {
-				return err
-			}
-		}
-	}
-	if lbIPs := servicePort.LoadBalancerIPStrings(); len(lbIPs) != 0 {
-		for _, lbIP := range lbIPs {
-			if err := nftables.RemoveFromSet(p.nfti, tableFamily, proto, lbIP, port, nftables.K8sNoEndpointsSet, nftables.K8sFilterDoReject); err != nil {
-				return err
-			}
-		}
-	}
-
-	return nil
-}
-
-func (p *proxy) addService(svcPortName ServicePortName, servicePort *v1.ServicePort, svc *v1.Service, baseSvcInfo *BaseServiceInfo) {
+func (p *proxy) addServicePort(svcPortName ServicePortName, servicePort *v1.ServicePort, svc *v1.Service, baseSvcInfo *BaseServiceInfo) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
@@ -257,21 +124,6 @@ func (p *proxy) addService(svcPortName ServicePortName, servicePort *v1.ServiceP
 	p.serviceMap[svcPortName] = newServiceInfo(servicePort, svc, baseSvcInfo)
 }
 
-// getServicePortEndpointChains return a slice of strings containing a specific ServicePortName all endpoints chains
-func (p *proxy) getServicePortEndpointChains(svcPortName ServicePortName, tableFamily utilnftables.TableFamily) []string {
-	chains := []string{}
-	for _, ep := range p.endpointsMap[svcPortName] {
-		epBase, ok := ep.(*endpointsInfo)
-		if !ok {
-			// Not recognize, skipping it
-			continue
-		}
-		chains = append(chains, epBase.epnft.Rule[tableFamily].Chain)
-	}
-
-	return chains
-}
-
 func (p *proxy) DeleteService(svc *v1.Service) {
 	klog.Infof("DeleteService for a service %s/%s", svc.Namespace, svc.Name)
 	if svc == nil {
@@ -280,11 +132,11 @@ func (p *proxy) DeleteService(svc *v1.Service) {
 	for i := range svc.Spec.Ports {
 		servicePort := &svc.Spec.Ports[i]
 		svcPortName := getSvcPortName(svc.Name, svc.Namespace, servicePort.Name, servicePort.Protocol)
-		p.deleteService(svcPortName, servicePort, svc)
+		p.deleteServicePort(svcPortName, servicePort, svc)
 	}
 }
 
-func (p *proxy) deleteService(svcPortName ServicePortName, servicePort *v1.ServicePort, svc *v1.Service) {
+func (p *proxy) deleteServicePort(svcPortName ServicePortName, servicePort *v1.ServicePort, svc *v1.Service) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	svcInfo, ok := p.serviceMap[svcPortName]
@@ -325,6 +177,39 @@ func (p *proxy) deleteService(svcPortName ServicePortName, servicePort *v1.Servi
 
 func (p *proxy) UpdateService(svcOld, svcNew *v1.Service) {
 	klog.Infof("UpdateService for a service %s/%s", svcNew.Namespace, svcNew.Name)
+	if reflect.DeepEqual(svcOld.Spec.Ports, svcNew.Spec.Ports) {
+		// Spec.Ports are equal, other changes are not important for nfproxy,
+		// ignoring them
+		return
+	}
+
+	for i := range svcNew.Spec.Ports {
+		servicePort := &svcNew.Spec.Ports[i]
+		svcPortName := getSvcPortName(svcNew.Name, svcNew.Namespace, servicePort.Name, servicePort.Protocol)
+		// baseSvcInfo := newBaseServiceInfo(servicePort, svcNew)
+		old, found := isServicePortInPorts(svcOld.Spec.Ports, servicePort)
+		if !found {
+			continue
+		}
+		klog.Infof("Service Port name %s eeds update old: %+v new: %+v", svcPortName, svcOld.Spec.Ports[old], servicePort)
+	}
+
+	for i := range svcNew.Spec.Ports {
+		servicePort := &svcNew.Spec.Ports[i]
+		svcPortName := getSvcPortName(svcNew.Name, svcNew.Namespace, servicePort.Name, servicePort.Protocol)
+		baseSvcInfo := newBaseServiceInfo(servicePort, svcNew)
+		if _, found := isServicePortInPorts(svcOld.Spec.Ports, servicePort); !found {
+			p.addServicePort(svcPortName, servicePort, svcNew, baseSvcInfo)
+		}
+	}
+	for i := range svcOld.Spec.Ports {
+		servicePort := &svcOld.Spec.Ports[i]
+		svcPortName := getSvcPortName(svcOld.Name, svcOld.Namespace, servicePort.Name, servicePort.Protocol)
+		// baseSvcInfo := newBaseServiceInfo(servicePort, svcNew)
+		if _, found := isServicePortInPorts(svcNew.Spec.Ports, servicePort); !found {
+			p.deleteServicePort(svcPortName, servicePort, svcOld)
+		}
+	}
 }
 
 func (p *proxy) AddEndpoints(ep *v1.Endpoints) {
@@ -494,57 +379,62 @@ func (p *proxy) UpdateEndpoints(epOld, epNew *v1.Endpoints) {
 		return
 	}
 	//	klog.Infof("Update endpoint: %s/%s", epNew.Namespace, epNew.Name)
-	if !reflect.DeepEqual(epOld.Subsets, epNew.Subsets) {
-		// First check if any new endpoint rules needs to be added
-		for i := range epNew.Subsets {
-			ss := &epNew.Subsets[i]
-			for i := range ss.Ports {
-				port := &ss.Ports[i]
-				if port.Port == 0 {
-					klog.Warningf("ignoring invalid endpoint port %s", port.Name)
+	if reflect.DeepEqual(epOld.Subsets, epNew.Subsets) {
+		// Subsets are equal, other changes are not important for nfproxy,
+		// ignoring them
+		return
+	}
+	// First check if any new endpoint rules needs to be added
+	for i := range epNew.Subsets {
+		ss := &epNew.Subsets[i]
+		for i := range ss.Ports {
+			port := &ss.Ports[i]
+			if port.Port == 0 {
+				klog.Warningf("ignoring invalid endpoint port %s", port.Name)
+				continue
+			}
+			svcPortName := getSvcPortName(epNew.Name, epNew.Namespace, port.Name, port.Protocol)
+			for i := range ss.Addresses {
+				addr := &ss.Addresses[i]
+				if addr.IP == "" {
+					klog.Warningf("ignoring invalid endpoint port %s with empty host", port.Name)
 					continue
 				}
-				svcPortName := getSvcPortName(epNew.Name, epNew.Namespace, port.Name, port.Protocol)
-				for i := range ss.Addresses {
-					addr := &ss.Addresses[i]
-					if addr.IP == "" {
-						klog.Warningf("ignoring invalid endpoint port %s with empty host", port.Name)
-						continue
-					}
-					if !isPortInSubset(epOld.Subsets, port) {
-						if err := p.addEndpoint(svcPortName, addr, port); err != nil {
-							klog.Errorf("Update endpoint: %s/%s failed with error: %+v", epNew.Namespace, epNew.Name, err)
-						}
+				// TODO (sbezverk) this logic handles only ADD, but does not update of the existing one
+				// Add update logic and unit tests.
+				if !isPortInSubset(epOld.Subsets, port) {
+					if err := p.addEndpoint(svcPortName, addr, port); err != nil {
+						klog.Errorf("Update endpoint: %s/%s failed with error: %+v", epNew.Namespace, epNew.Name, err)
 					}
 				}
 			}
 		}
-		for i := range epOld.Subsets {
-			ss := &epOld.Subsets[i]
-			for i := range ss.Ports {
-				port := &ss.Ports[i]
-				if port.Port == 0 {
-					klog.Warningf("ignoring invalid endpoint port %s", port.Name)
+	}
+	for i := range epOld.Subsets {
+		ss := &epOld.Subsets[i]
+		for i := range ss.Ports {
+			port := &ss.Ports[i]
+			if port.Port == 0 {
+				klog.Warningf("ignoring invalid endpoint port %s", port.Name)
+				continue
+			}
+			svcPortName := getSvcPortName(epOld.Name, epOld.Namespace, port.Name, port.Protocol)
+			// TODO review possible racing scenarios
+			p.mu.Lock()
+			eps, ok := p.endpointsMap[svcPortName]
+			p.mu.Unlock()
+			// If key does not exist, then nothing to delete, going to the next entry
+			if !ok {
+				continue
+			}
+			for i := range ss.Addresses {
+				addr := &ss.Addresses[i]
+				if addr.IP == "" {
+					klog.Warningf("ignoring invalid endpoint port %s with empty host", port.Name)
 					continue
 				}
-				svcPortName := getSvcPortName(epOld.Name, epOld.Namespace, port.Name, port.Protocol)
-				// TODO review possible racing scenarios
-				p.mu.Lock()
-				eps, ok := p.endpointsMap[svcPortName]
-				p.mu.Unlock()
-				// If key does not exist, then nothing to delete, going to the next entry
-				if !ok {
-					continue
-				}
-				for i := range ss.Addresses {
-					addr := &ss.Addresses[i]
-					if addr.IP == "" {
-						klog.Warningf("ignoring invalid endpoint port %s with empty host", port.Name)
-						continue
-					}
-					if !isPortInSubset(epNew.Subsets, port) {
-						p.deleteEndpoint(svcPortName, addr, port, eps)
-					}
+				if !isPortInSubset(epNew.Subsets, port) {
+					p.deleteEndpoint(svcPortName, addr, port, eps)
 				}
 			}
 		}
@@ -607,36 +497,4 @@ func BootstrapRules(p Proxy, host, extAddr string, port string) error {
 	p.AddEndpoints(&endpoint)
 
 	return nil
-}
-
-func getSvcPortName(name, namespace string, portName string, protocol v1.Protocol) ServicePortName {
-	return ServicePortName{
-		NamespacedName: types.NamespacedName{Namespace: namespace, Name: name},
-		Port:           portName,
-		Protocol:       protocol,
-	}
-}
-
-func getIPFamily(ipaddr string) (v1.IPFamily, utilnftables.TableFamily) {
-	var ipFamily v1.IPFamily
-	var ipTableFamily utilnftables.TableFamily
-	if utilnet.IsIPv6String(ipaddr) {
-		ipFamily = v1.IPv6Protocol
-		ipTableFamily = utilnftables.TableFamilyIPv6
-	} else {
-		ipFamily = v1.IPv4Protocol
-		ipTableFamily = utilnftables.TableFamilyIPv4
-	}
-	return ipFamily, ipTableFamily
-}
-
-func isPortInSubset(subsets []v1.EndpointSubset, port *v1.EndpointPort) bool {
-	for _, s := range subsets {
-		for _, p := range s.Ports {
-			if p.Name == port.Name && p.Port == port.Port && p.Protocol == port.Protocol {
-				return true
-			}
-		}
-	}
-	return false
 }
