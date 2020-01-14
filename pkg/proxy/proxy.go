@@ -49,7 +49,7 @@ type proxy struct {
 	mu           sync.Mutex // protects the following fields
 	serviceMap   ServiceMap
 	endpointsMap EndpointsMap
-	portsMap     map[utilproxy.LocalPort]utilproxy.Closeable
+	cache        cache
 }
 
 type epKey struct {
@@ -63,9 +63,12 @@ func NewProxy(nfti *nftables.NFTInterface, hostname string, recorder record.Even
 	return &proxy{
 		hostname:     hostname,
 		nfti:         nfti,
-		portsMap:     make(map[utilproxy.LocalPort]utilproxy.Closeable),
 		serviceMap:   make(ServiceMap),
 		endpointsMap: make(EndpointsMap),
+		cache: cache{
+			svcCache: make(map[types.NamespacedName]*v1.Service),
+			epCache:  make(map[types.NamespacedName]*v1.Endpoints),
+		},
 	}
 }
 
@@ -84,6 +87,8 @@ func (p *proxy) AddService(svc *v1.Service) {
 		baseSvcInfo := newBaseServiceInfo(servicePort, svc)
 		p.addServicePort(svcPortName, servicePort, svc, baseSvcInfo)
 	}
+	// Storing new service in the cache for later reference
+	p.cache.storeSvcInCache(svc)
 }
 
 func (p *proxy) addServicePort(svcPortName ServicePortName, servicePort *v1.ServicePort, svc *v1.Service, baseSvcInfo *BaseServiceInfo) {
@@ -134,6 +139,8 @@ func (p *proxy) DeleteService(svc *v1.Service) {
 		svcPortName := getSvcPortName(svc.Name, svc.Namespace, servicePort.Name, servicePort.Protocol)
 		p.deleteServicePort(svcPortName, servicePort, svc)
 	}
+	// removing deleted service from cache
+	p.cache.removeSvcFromCache(svc.Name, svc.Namespace)
 }
 
 func (p *proxy) deleteServicePort(svcPortName ServicePortName, servicePort *v1.ServicePort, svc *v1.Service) {
@@ -177,39 +184,49 @@ func (p *proxy) deleteServicePort(svcPortName ServicePortName, servicePort *v1.S
 
 func (p *proxy) UpdateService(svcOld, svcNew *v1.Service) {
 	klog.Infof("UpdateService for a service %s/%s", svcNew.Namespace, svcNew.Name)
-	if reflect.DeepEqual(svcOld.Spec.Ports, svcNew.Spec.Ports) {
-		// Spec.Ports are equal, other changes are not important for nfproxy,
-		// ignoring them
-		return
+
+	// Check if the version of Last Known Service's version matches with svcOld version
+	// mismatch would indicate lost update.
+	ver, err := p.cache.getCachedSvcVersion(svcNew.Name, svcNew.Namespace)
+	if err != nil {
+		klog.Warningf("UpdateService did not find service %s/%s in cache, it is a big, please file an issue", svcNew.Namespace, svcNew.Name)
+	} else {
+		if svcOld.ObjectMeta.GetResourceVersion() != ver {
+			klog.Warningf("mismatch version detected between old service %s/%s and last known stored in cache", svcNew.Namespace, svcNew.Name)
+		} else {
+			klog.Warningf("old service %s/%s and last known stored in cache are in sync, version: %s", svcNew.Namespace, svcNew.Name, ver)
+		}
 	}
+	storedSvc, _ := p.cache.getLastKnownSvcFromCache(svcNew.Name, svcNew.Namespace)
 
 	for i := range svcNew.Spec.Ports {
 		servicePort := &svcNew.Spec.Ports[i]
 		svcPortName := getSvcPortName(svcNew.Name, svcNew.Namespace, servicePort.Name, servicePort.Protocol)
 		// baseSvcInfo := newBaseServiceInfo(servicePort, svcNew)
-		old, found := isServicePortInPorts(svcOld.Spec.Ports, servicePort)
+		old, found := isServicePortInPorts(storedSvc.Spec.Ports, servicePort)
 		if !found {
 			continue
 		}
 		klog.Infof("Service Port name %s eeds update old: %+v new: %+v", svcPortName, svcOld.Spec.Ports[old], servicePort)
 	}
-
-	for i := range svcNew.Spec.Ports {
-		servicePort := &svcNew.Spec.Ports[i]
-		svcPortName := getSvcPortName(svcNew.Name, svcNew.Namespace, servicePort.Name, servicePort.Protocol)
-		baseSvcInfo := newBaseServiceInfo(servicePort, svcNew)
-		if _, found := isServicePortInPorts(svcOld.Spec.Ports, servicePort); !found {
-			p.addServicePort(svcPortName, servicePort, svcNew, baseSvcInfo)
+	/*
+		for i := range svcNew.Spec.Ports {
+			servicePort := &svcNew.Spec.Ports[i]
+			svcPortName := getSvcPortName(svcNew.Name, svcNew.Namespace, servicePort.Name, servicePort.Protocol)
+			baseSvcInfo := newBaseServiceInfo(servicePort, svcNew)
+			if _, found := isServicePortInPorts(svcOld.Spec.Ports, servicePort); !found {
+				p.addServicePort(svcPortName, servicePort, svcNew, baseSvcInfo)
+			}
 		}
-	}
-	for i := range svcOld.Spec.Ports {
-		servicePort := &svcOld.Spec.Ports[i]
-		svcPortName := getSvcPortName(svcOld.Name, svcOld.Namespace, servicePort.Name, servicePort.Protocol)
-		// baseSvcInfo := newBaseServiceInfo(servicePort, svcNew)
-		if _, found := isServicePortInPorts(svcNew.Spec.Ports, servicePort); !found {
-			p.deleteServicePort(svcPortName, servicePort, svcOld)
+		for i := range svcOld.Spec.Ports {
+			servicePort := &svcOld.Spec.Ports[i]
+			svcPortName := getSvcPortName(svcOld.Name, svcOld.Namespace, servicePort.Name, servicePort.Protocol)
+			// baseSvcInfo := newBaseServiceInfo(servicePort, svcNew)
+			if _, found := isServicePortInPorts(svcNew.Spec.Ports, servicePort); !found {
+				p.deleteServicePort(svcPortName, servicePort, svcOld)
+			}
 		}
-	}
+	*/
 }
 
 func (p *proxy) AddEndpoints(ep *v1.Endpoints) {
