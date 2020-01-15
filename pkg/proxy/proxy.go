@@ -17,6 +17,7 @@ limitations under the License.
 package proxy
 
 import (
+	"fmt"
 	"reflect"
 	"strconv"
 	"sync"
@@ -129,6 +130,21 @@ func (p *proxy) addServicePort(svcPortName ServicePortName, servicePort *v1.Serv
 	p.serviceMap[svcPortName] = newServiceInfo(servicePort, svc, baseSvcInfo)
 }
 
+// rekeyServicePort gets ServicePort info stored for the oldSvcPortName and stores it back
+// with the new key.
+func (p *proxy) rekeyServicePort(oldSvcPortName, newSvcPortName ServicePortName) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	d, ok := p.serviceMap[oldSvcPortName]
+	if !ok {
+		return fmt.Errorf("service port name %+v does not exist", oldSvcPortName)
+	}
+	p.serviceMap[newSvcPortName] = d
+	delete(p.serviceMap, oldSvcPortName)
+	return nil
+}
+
 func (p *proxy) DeleteService(svc *v1.Service) {
 	klog.Infof("DeleteService for a service %s/%s", svc.Namespace, svc.Name)
 	if svc == nil {
@@ -189,44 +205,68 @@ func (p *proxy) UpdateService(svcOld, svcNew *v1.Service) {
 	// mismatch would indicate lost update.
 	ver, err := p.cache.getCachedSvcVersion(svcNew.Name, svcNew.Namespace)
 	if err != nil {
-		klog.Warningf("UpdateService did not find service %s/%s in cache, it is a big, please file an issue", svcNew.Namespace, svcNew.Name)
+		klog.Warningf("UpdateService did not find service %s/%s in cache, it is a bug, please file an issue", svcNew.Namespace, svcNew.Name)
 	} else {
+		// TODO add logic to check version, if oldSvc's version more recent than storedSvc, then use oldSvc as the most current old object.
 		if svcOld.ObjectMeta.GetResourceVersion() != ver {
 			klog.Warningf("mismatch version detected between old service %s/%s and last known stored in cache", svcNew.Namespace, svcNew.Name)
 		} else {
-			klog.Warningf("old service %s/%s and last known stored in cache are in sync, version: %s", svcNew.Namespace, svcNew.Name, ver)
+			klog.V(5).Infof("old service %s/%s and last known stored in cache are in sync, version: %s", svcNew.Namespace, svcNew.Name, ver)
 		}
 	}
-	storedSvc, _ := p.cache.getLastKnownSvcFromCache(svcNew.Name, svcNew.Namespace)
 
+	storedSvc, _ := p.cache.getLastKnownSvcFromCache(svcNew.Name, svcNew.Namespace)
 	for i := range svcNew.Spec.Ports {
 		servicePort := &svcNew.Spec.Ports[i]
 		svcPortName := getSvcPortName(svcNew.Name, svcNew.Namespace, servicePort.Name, servicePort.Protocol)
-		// baseSvcInfo := newBaseServiceInfo(servicePort, svcNew)
-		old, found := isServicePortInPorts(storedSvc.Spec.Ports, servicePort)
+		baseSvcInfo := newBaseServiceInfo(servicePort, svcNew)
+		id, found := isServicePortInPorts(storedSvc.Spec.Ports, servicePort)
 		if !found {
+			klog.Infof("New Service Port found: %+v", svcPortName)
+			// Adding new service port
+			p.addServicePort(svcPortName, servicePort, svcNew, baseSvcInfo)
 			continue
 		}
-		klog.Infof("Service Port name %s eeds update old: %+v new: %+v", svcPortName, svcOld.Spec.Ports[old], servicePort)
+		// If ServicePortName does not match, it means Protocol/Port pair has not been changed,
+		// otherwise ServicePort would not have been found.
+		// Changes of Port.Name or Port.Protocol result in a new ServicePortName generated, hence the old one
+		// needs to be replaced.
+		oldServicePortName := getSvcPortName(storedSvc.Name, storedSvc.Namespace, storedSvc.Spec.Ports[id].Name, storedSvc.Spec.Ports[id].Protocol)
+		if storedSvc.Spec.Ports[id].Name != servicePort.Name {
+			// In case of a Port.Name change no reprogramming is required. All is required, copy old ServicePort's data and store it in
+			// the map with new svcPortName key.
+			if err := p.rekeyServicePort(oldServicePortName, svcPortName); err != nil {
+				klog.Warningf("update of ServicePortName failed with error %w", err)
+			}
+			klog.V(5).Infof("Rekeyed old Service port %+v with new %+v", oldServicePortName, svcPortName)
+			continue
+		}
+		// If Port.Protocol got changed to prevent traffic drop, first add updated to new Protocol:Port rules
+		// then remove the old ones
+		if storedSvc.Spec.Ports[id].Protocol != servicePort.Protocol ||
+			storedSvc.Spec.Ports[id].Port != servicePort.Port {
+			// Add updated ServicePort
+			p.addServicePort(svcPortName, servicePort, svcNew, baseSvcInfo)
+			// Deleting old ServicePort
+			p.deleteServicePort(oldServicePortName, &storedSvc.Spec.Ports[id], storedSvc)
+			klog.Infof("Service Port name has been updated old: %+v new: %+v", oldServicePortName, svcPortName)
+			continue
+		}
 	}
-	/*
-		for i := range svcNew.Spec.Ports {
-			servicePort := &svcNew.Spec.Ports[i]
-			svcPortName := getSvcPortName(svcNew.Name, svcNew.Namespace, servicePort.Name, servicePort.Protocol)
-			baseSvcInfo := newBaseServiceInfo(servicePort, svcNew)
-			if _, found := isServicePortInPorts(svcOld.Spec.Ports, servicePort); !found {
-				p.addServicePort(svcPortName, servicePort, svcNew, baseSvcInfo)
-			}
+
+	// Processing deleted or undiscoverably changed ServicePorts, if ServicePort exists in storedSvc.Spec.Ports but
+	// does not exist in svcNew.Spec.Ports delete it.
+	for i := range storedSvc.Spec.Ports {
+		servicePort := &storedSvc.Spec.Ports[i]
+		svcPortName := getSvcPortName(storedSvc.Name, storedSvc.Namespace, servicePort.Name, servicePort.Protocol)
+		if _, found := isServicePortInPorts(svcNew.Spec.Ports, servicePort); !found {
+			p.deleteServicePort(svcPortName, servicePort, storedSvc)
+			klog.V(5).Infof("removed Service port %+v", svcPortName)
 		}
-		for i := range svcOld.Spec.Ports {
-			servicePort := &svcOld.Spec.Ports[i]
-			svcPortName := getSvcPortName(svcOld.Name, svcOld.Namespace, servicePort.Name, servicePort.Protocol)
-			// baseSvcInfo := newBaseServiceInfo(servicePort, svcNew)
-			if _, found := isServicePortInPorts(svcNew.Spec.Ports, servicePort); !found {
-				p.deleteServicePort(svcPortName, servicePort, svcOld)
-			}
-		}
-	*/
+	}
+
+	// Update service in cache after applying all changes
+	p.cache.storeSvcInCache(svcNew)
 }
 
 func (p *proxy) AddEndpoints(ep *v1.Endpoints) {

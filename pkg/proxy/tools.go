@@ -90,11 +90,23 @@ func isPortInSubset(subsets []v1.EndpointSubset, port *v1.EndpointPort) bool {
 // and return index in the slice and true if found.
 // ServicePort name and protocol are checked to determine if ServicePort exists
 func isServicePortInPorts(ports []v1.ServicePort, servicePort *v1.ServicePort) (int, bool) {
+	// First pass to check for matching name
 	for i := 0; i < len(ports); i++ {
-		if servicePort.Name == ports[i].Name &&
-			servicePort.Protocol == ports[i].Protocol {
+		if servicePort.Name == ports[i].Name {
+			// Found match by name
 			return i, true
 		}
 	}
+	// In case if Port's name was changed for God knows what reasons
+	// trying to match for Protocol and Port pair
+	for i := 0; i < len(ports); i++ {
+		if servicePort.Protocol == ports[i].Protocol &&
+			servicePort.Port == ports[i].Port {
+			return i, true
+		}
+	}
+
+	// Port has not been found in the provided slice, indicating that it is either a new port
+	// or delete port.
 	return 0, false
 }
