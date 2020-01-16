@@ -34,10 +34,10 @@ type cache struct {
 }
 
 // getCachedSvcVersion return version of stored service
-func (svc *cache) getCachedSvcVersion(name, namespace string) (string, error) {
-	svc.Lock()
-	defer svc.Unlock()
-	s, ok := svc.svcCache[types.NamespacedName{Name: name, Namespace: namespace}]
+func (c *cache) getCachedSvcVersion(name, namespace string) (string, error) {
+	c.Lock()
+	defer c.Unlock()
+	s, ok := c.svcCache[types.NamespacedName{Name: name, Namespace: namespace}]
 	if !ok {
 		return "", fmt.Errorf("service %s/%s not found in the cache", namespace, name)
 	}
@@ -46,10 +46,10 @@ func (svc *cache) getCachedSvcVersion(name, namespace string) (string, error) {
 }
 
 // getLastKnownSvcFromCache return pointer to the latest known/stored instance of the service
-func (svc *cache) getLastKnownSvcFromCache(name, namespace string) (*v1.Service, error) {
-	svc.Lock()
-	defer svc.Unlock()
-	s, ok := svc.svcCache[types.NamespacedName{Name: name, Namespace: namespace}]
+func (c *cache) getLastKnownSvcFromCache(name, namespace string) (*v1.Service, error) {
+	c.Lock()
+	defer c.Unlock()
+	s, ok := c.svcCache[types.NamespacedName{Name: name, Namespace: namespace}]
 	if !ok {
 		return nil, fmt.Errorf("service %s/%s not found in the cache", namespace, name)
 	}
@@ -60,20 +60,65 @@ func (svc *cache) getLastKnownSvcFromCache(name, namespace string) (*v1.Service,
 // storeSvcInCache stores in the cache instance of a service, if cache does not have already
 // service, it will be added, if it already has, iy will be replaced with the one passed
 // as a parameter.
-func (svc *cache) storeSvcInCache(s *v1.Service) {
-	svc.Lock()
-	defer svc.Unlock()
-	if _, ok := svc.svcCache[types.NamespacedName{Name: s.ObjectMeta.Name, Namespace: s.ObjectMeta.Namespace}]; ok {
-		delete(svc.svcCache, types.NamespacedName{Name: s.ObjectMeta.Name, Namespace: s.ObjectMeta.Namespace})
+func (c *cache) storeSvcInCache(s *v1.Service) {
+	c.Lock()
+	defer c.Unlock()
+	if _, ok := c.svcCache[types.NamespacedName{Name: s.ObjectMeta.Name, Namespace: s.ObjectMeta.Namespace}]; ok {
+		delete(c.svcCache, types.NamespacedName{Name: s.ObjectMeta.Name, Namespace: s.ObjectMeta.Namespace})
 	}
-	svc.svcCache[types.NamespacedName{Name: s.ObjectMeta.Name, Namespace: s.ObjectMeta.Namespace}] = s
+	c.svcCache[types.NamespacedName{Name: s.ObjectMeta.Name, Namespace: s.ObjectMeta.Namespace}] = s
 }
 
 // removeSvcFromCache removes stored service from cache.
-func (svc *cache) removeSvcFromCache(name, namespace string) {
-	svc.Lock()
-	defer svc.Unlock()
-	if _, ok := svc.svcCache[types.NamespacedName{Name: name, Namespace: namespace}]; ok {
-		delete(svc.svcCache, types.NamespacedName{Name: name, Namespace: namespace})
+func (c *cache) removeSvcFromCache(name, namespace string) {
+	c.Lock()
+	defer c.Unlock()
+	if _, ok := c.svcCache[types.NamespacedName{Name: name, Namespace: namespace}]; ok {
+		delete(c.svcCache, types.NamespacedName{Name: name, Namespace: namespace})
+	}
+}
+
+// getCachedEpVersion return version of stored endpoint
+func (c *cache) getCachedEpVersion(name, namespace string) (string, error) {
+	c.Lock()
+	defer c.Unlock()
+	ep, ok := c.epCache[types.NamespacedName{Name: name, Namespace: namespace}]
+	if !ok {
+		return "", fmt.Errorf("endpoint %s/%s not found in the cache", namespace, name)
+	}
+
+	return ep.ObjectMeta.GetResourceVersion(), nil
+}
+
+// getLastKnownEpFromCache return pointer to the latest known/stored instance of the endpoint
+func (c *cache) getLastKnownEpFromCache(name, namespace string) (*v1.Endpoints, error) {
+	c.Lock()
+	defer c.Unlock()
+	s, ok := c.epCache[types.NamespacedName{Name: name, Namespace: namespace}]
+	if !ok {
+		return nil, fmt.Errorf("endpoint %s/%s not found in the cache", namespace, name)
+	}
+
+	return s, nil
+}
+
+// storeEpInCache stores in the cache instance of a endpoint, if cache does not have already
+// endpoint, it will be added, if it already has, iy will be replaced with the one passed
+// as a parameter.
+func (c *cache) storeEpInCache(ep *v1.Endpoints) {
+	c.Lock()
+	defer c.Unlock()
+	if _, ok := c.epCache[types.NamespacedName{Name: ep.ObjectMeta.Name, Namespace: ep.ObjectMeta.Namespace}]; ok {
+		delete(c.epCache, types.NamespacedName{Name: ep.ObjectMeta.Name, Namespace: ep.ObjectMeta.Namespace})
+	}
+	c.epCache[types.NamespacedName{Name: ep.ObjectMeta.Name, Namespace: ep.ObjectMeta.Namespace}] = ep
+}
+
+// removeEpFromCache removes stored service from cache.
+func (c *cache) removeEpFromCache(name, namespace string) {
+	c.Lock()
+	defer c.Unlock()
+	if _, ok := c.svcCache[types.NamespacedName{Name: name, Namespace: namespace}]; ok {
+		delete(c.svcCache, types.NamespacedName{Name: name, Namespace: namespace})
 	}
 }
