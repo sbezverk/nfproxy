@@ -342,14 +342,14 @@ func RemoveFromSet(nfti *NFTInterface, tableFamily nftables.TableFamily, proto v
 	if err = si.Sets().SetDelElements(set, se); err != nil {
 		if errors.Is(err, unix.EBUSY) {
 			// TODO Add logic to retry, for now just error out
-			klog.Warningf("RemoveFromSet for %s:%s:%d failed with error: %v", proto, addr, port, errors.Unwrap(err))
+			klog.Warningf("entry for %s:%s:%d in set %s is busy, error: %v", proto, addr, port, errors.Unwrap(err))
 			return err
 		}
 		if errors.Is(err, unix.ENOENT) {
-			klog.Warningf("RemoveFromSet for %s:%s:%d does not exist", proto, addr, port)
+			klog.Warningf("entry for %s:%s:%d does not exist in set %s", proto, addr, port, set)
 			return nil
 		}
-		klog.Errorf("RemoveFromSet for %s:%s:%d failed with error: %v", proto, addr, port, err)
+		klog.Errorf("failed to remove entry for %s:%s:%d from set %s with error: %v", proto, addr, port, set, errors.Unwrap(err))
 		return err
 	}
 

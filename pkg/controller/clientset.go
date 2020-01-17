@@ -36,6 +36,8 @@ func GetClientset(kubeconfig string) (*kubernetes.Clientset, error) {
 	if err != nil {
 		return nil, err
 	}
+	config.Burst = 200
+	config.QPS = 100
 	k8s, err := kubernetes.NewForConfig(config)
 	if err != nil {
 		return nil, err
