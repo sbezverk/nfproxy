@@ -90,7 +90,7 @@ spec:
       hostNetwork: true
       containers:
         - name: nfproxy
-          image: docker.io/sbezverk/nfproxy:0.0.0
+          image: docker.io/sbezverk/nfproxy-debug:0.0.0
           imagePullPolicy: Always
           securityContext:
             privileged: true

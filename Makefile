@@ -16,10 +16,10 @@ nfproxy:
 	CGO_ENABLED=0 GOOS=linux GO111MODULE=on go build -a -ldflags '-extldflags "-static"' -o ./bin/nfproxy ./cmd/nfproxy.go
 
 container: nfproxy
-	docker build -t $(REGISTRY_NAME)/nfproxy:$(IMAGE_VERSION) -f ./build/Dockerfile.nfproxy .
+	docker build -t $(REGISTRY_NAME)/nfproxy-debug:$(IMAGE_VERSION) -f ./build/Dockerfile.nfproxy .
 
 push: container
-	docker push $(REGISTRY_NAME)/nfproxy:$(IMAGE_VERSION)
+	docker push $(REGISTRY_NAME)/nfproxy-debug:$(IMAGE_VERSION)
 
 clean:
 	rm -rf bin
