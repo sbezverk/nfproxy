@@ -64,3 +64,8 @@ replace (
 	k8s.io/metrics => k8s.io/metrics v0.17.0
 	k8s.io/sample-apiserver => k8s.io/sample-apiserver v0.17.0
 )
+
+replace (
+	github.com/google/nftables => /home/sbezverk/development/go/workspace/linux/nftables
+	github.com/sbezverk/nftableslib => /home/sbezverk/development/go/workspace/linux/nftableslib
+)
