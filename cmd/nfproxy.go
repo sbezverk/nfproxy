@@ -24,6 +24,9 @@ import (
 	"syscall"
 	"time"
 
+	"net/http"
+	_ "net/http/pprof"
+
 	"github.com/sbezverk/nfproxy/pkg/controller"
 	"github.com/sbezverk/nfproxy/pkg/nftables"
 	"github.com/sbezverk/nfproxy/pkg/proxy"
@@ -71,6 +74,9 @@ func main() {
 	logs.InitLogs()
 	defer logs.FlushLogs()
 
+	go func() {
+		klog.Info(http.ListenAndServe("localhost:6767", nil))
+	}()
 	// Get kubernetes client set
 	client, err := controller.GetClientset(kubeconfig)
 	if err != nil {
