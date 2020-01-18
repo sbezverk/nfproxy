@@ -76,6 +76,8 @@ func NewProxy(nfti *nftables.NFTInterface, hostname string, recorder record.Even
 func (p *proxy) AddService(svc *v1.Service) {
 	s := time.Now()
 	defer klog.V(5).Infof("AddService ran for: %d nanoseconds", time.Since(s))
+	// Storing new service in the cache for later reference
+	p.cache.storeSvcInCache(svc)
 	klog.V(5).Infof("AddService for a service %s/%s", svc.Namespace, svc.Name)
 	if svc == nil {
 		return
@@ -90,8 +92,6 @@ func (p *proxy) AddService(svc *v1.Service) {
 		baseSvcInfo := newBaseServiceInfo(servicePort, svc)
 		p.addServicePort(svcPortName, servicePort, svc, baseSvcInfo)
 	}
-	// Storing new service in the cache for later reference
-	p.cache.storeSvcInCache(svc)
 }
 
 func (p *proxy) addServicePort(svcPortName ServicePortName, servicePort *v1.ServicePort, svc *v1.Service, baseSvcInfo *BaseServiceInfo) {
@@ -215,9 +215,12 @@ func (p *proxy) UpdateService(svcOld, svcNew *v1.Service) {
 
 	// Check if the version of Last Known Service's version matches with svcOld version
 	// mismatch would indicate lost update.
+	var storedSvc *v1.Service
 	ver, err := p.cache.getCachedSvcVersion(svcNew.Name, svcNew.Namespace)
 	if err != nil {
-		klog.Warningf("UpdateService did not find service %s/%s in cache, it is a bug, please file an issue", svcNew.Namespace, svcNew.Name)
+		klog.Errorf("UpdateService did not find service %s/%s in cache, it is a bug, please file an issue", svcNew.Namespace, svcNew.Name)
+		// Since cache does not have old known service entry, use svcOld
+		storedSvc = svcOld
 	} else {
 		// TODO add logic to check version, if oldSvc's version more recent than storedSvc, then use oldSvc as the most current old object.
 		if svcOld.ObjectMeta.GetResourceVersion() != ver {
@@ -225,9 +228,8 @@ func (p *proxy) UpdateService(svcOld, svcNew *v1.Service) {
 		} else {
 			klog.V(5).Infof("old service %s/%s and last known stored in cache are in sync, version: %s", svcNew.Namespace, svcNew.Name, ver)
 		}
+		storedSvc, _ = p.cache.getLastKnownSvcFromCache(svcNew.Name, svcNew.Namespace)
 	}
-
-	storedSvc, _ := p.cache.getLastKnownSvcFromCache(svcNew.Name, svcNew.Namespace)
 	for i := range svcNew.Spec.Ports {
 		servicePort := &svcNew.Spec.Ports[i]
 		svcPortName := getSvcPortName(svcNew.Name, svcNew.Namespace, servicePort.Name, servicePort.Protocol)
@@ -275,7 +277,6 @@ func (p *proxy) UpdateService(svcOld, svcNew *v1.Service) {
 			klog.V(5).Infof("removed Service port %+v", svcPortName)
 		}
 	}
-
 	// Update service in cache after applying all changes
 	p.cache.storeSvcInCache(svcNew)
 }
@@ -283,6 +284,7 @@ func (p *proxy) UpdateService(svcOld, svcNew *v1.Service) {
 func (p *proxy) AddEndpoints(ep *v1.Endpoints) {
 	s := time.Now()
 	defer klog.V(5).Infof("AddEndpoints ran for: %d nanoseconds", time.Since(s))
+	p.cache.storeEpInCache(ep)
 	klog.V(6).Infof("Add endpoint: %s/%s", ep.Namespace, ep.Name)
 	//	p.UpdateEndpoints(&v1.Endpoints{Subsets: []v1.EndpointSubset{}}, ep)
 	info, err := processEpSubsets(ep)
@@ -297,7 +299,6 @@ func (p *proxy) AddEndpoints(ep *v1.Endpoints) {
 			return
 		}
 	}
-	p.cache.storeEpInCache(ep)
 }
 
 func (p *proxy) addEndpoint(svcPortName ServicePortName, addr *v1.EndpointAddress, port *v1.EndpointPort) error {
@@ -510,9 +511,11 @@ func (p *proxy) UpdateEndpoints(epOld, epNew *v1.Endpoints) {
 	klog.V(6).Infof("UpdateEndpoint for endpoint: %s/%s", epNew.Namespace, epNew.Name)
 	// Check if the version of Last Known Endpoint's version matches with epOld version
 	// mismatch would indicate lost update.
+	var storedEp *v1.Endpoints
 	ver, err := p.cache.getCachedEpVersion(epNew.Name, epNew.Namespace)
 	if err != nil {
-		klog.Warningf("UpdateEndpoint did not find Endpoint %s/%s in cache, it is a bug, please file an issue", epNew.Namespace, epNew.Name)
+		klog.Errorf("UpdateEndpoint did not find Endpoint %s/%s in cache, it is a bug, please file an issue", epNew.Namespace, epNew.Name)
+		storedEp = epOld
 	} else {
 		// TODO add logic to check version, if oldEp's version more recent than storedEp, then use oldEp as the most current old object.
 		oldVer := epOld.ObjectMeta.GetResourceVersion()
@@ -520,8 +523,8 @@ func (p *proxy) UpdateEndpoints(epOld, epNew *v1.Endpoints) {
 			klog.Warningf("mismatch version detected between old Endpoint %s/%s and last known stored in cache %s/%s",
 				epNew.Namespace, epNew.Name, oldVer, ver)
 		}
+		storedEp, _ = p.cache.getLastKnownEpFromCache(epNew.Name, epNew.Namespace)
 	}
-	storedEp, _ := p.cache.getLastKnownEpFromCache(epNew.Name, epNew.Namespace)
 	// Check for new Endpoint's ports, if found adding them into EndpointMap and corresponding programming rules.
 	info, err := processEpSubsets(epNew)
 	if err != nil {
@@ -613,4 +616,19 @@ func BootstrapRules(p Proxy, host, extAddr string, port string) error {
 	p.AddEndpoints(&endpoint)
 
 	return nil
+}
+
+// getServicePortEndpointChains return a slice of strings containing a specific ServicePortName all endpoints chains
+func (p *proxy) getServicePortEndpointChains(svcPortName ServicePortName, tableFamily utilnftables.TableFamily) []string {
+	chains := []string{}
+	for _, ep := range p.endpointsMap[svcPortName] {
+		epBase, ok := ep.(*endpointsInfo)
+		if !ok {
+			// Not recognize, skipping it
+			continue
+		}
+		chains = append(chains, epBase.epnft.Rule[tableFamily].Chain)
+	}
+
+	return chains
 }

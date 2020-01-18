@@ -111,6 +111,7 @@ func (c *controller) handleAddEndpoint(obj interface{}) {
 		utilruntime.HandleError(fmt.Errorf("unexpected object type: %v", obj))
 		return
 	}
+	klog.V(5).Infof("controller received add endpoint event for %s/%s", ep.Namespace, ep.Name)
 	//	if ep.Name == "app2" {
 	c.proxy.AddEndpoints(ep)
 	//	}
