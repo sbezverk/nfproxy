@@ -38,10 +38,10 @@ import (
 type Proxy interface {
 	AddService(svc *v1.Service)
 	DeleteService(svc *v1.Service)
-	UpdateService(svcOld, svcNew *v1.Service)
+	UpdateService(svcNew *v1.Service)
 	AddEndpoints(ep *v1.Endpoints)
 	DeleteEndpoints(ep *v1.Endpoints)
-	UpdateEndpoints(epOld, epNew *v1.Endpoints)
+	UpdateEndpoints(epNew *v1.Endpoints)
 }
 
 type proxy struct {
@@ -208,27 +208,20 @@ func (p *proxy) deleteServicePort(svcPortName ServicePortName, servicePort *v1.S
 }
 
 // TODO (sbezverk) Add update logic when Spec's fields example ExternalIPs, LoadbalancerIP etc are updated.
-func (p *proxy) UpdateService(svcOld, svcNew *v1.Service) {
+func (p *proxy) UpdateService(svcNew *v1.Service) {
 	s := time.Now()
 	defer klog.V(5).Infof("UpdateService ran for: %d nanoseconds", time.Since(s))
 	klog.V(5).Infof("UpdateService for a service %s/%s", svcNew.Namespace, svcNew.Name)
 
 	// Check if the version of Last Known Service's version matches with svcOld version
 	// mismatch would indicate lost update.
-	var storedSvc *v1.Service
-	ver, err := p.cache.getCachedSvcVersion(svcNew.Name, svcNew.Namespace)
+	storedSvc, err := p.cache.getLastKnownSvcFromCache(svcNew.Name, svcNew.Namespace)
 	if err != nil {
 		klog.Errorf("UpdateService did not find service %s/%s in cache, it is a bug, please file an issue", svcNew.Namespace, svcNew.Name)
-		// Since cache does not have old known service entry, use svcOld
-		storedSvc = svcOld
-	} else {
-		// TODO add logic to check version, if oldSvc's version more recent than storedSvc, then use oldSvc as the most current old object.
-		if svcOld.ObjectMeta.GetResourceVersion() != ver {
-			klog.Warningf("mismatch version detected between old service %s/%s and last known stored in cache", svcNew.Namespace, svcNew.Name)
-		} else {
-			klog.V(5).Infof("old service %s/%s and last known stored in cache are in sync, version: %s", svcNew.Namespace, svcNew.Name, ver)
-		}
-		storedSvc, _ = p.cache.getLastKnownSvcFromCache(svcNew.Name, svcNew.Namespace)
+		// Since cache does not have old known service entry, cannot handle Update properly
+		// storing svcNew in cache and exit
+		p.cache.storeSvcInCache(svcNew)
+		return
 	}
 	for i := range svcNew.Spec.Ports {
 		servicePort := &svcNew.Spec.Ports[i]
@@ -500,7 +493,7 @@ func processEpSubsets(ep *v1.Endpoints) ([]epInfo, error) {
 	return ports, nil
 }
 
-func (p *proxy) UpdateEndpoints(epOld, epNew *v1.Endpoints) {
+func (p *proxy) UpdateEndpoints(epNew *v1.Endpoints) {
 	s := time.Now()
 	defer klog.V(5).Infof("UpdateEndpoints ran for: %d nanoseconds", time.Since(s))
 	if epNew.Namespace == "" && epNew.Name == "" {
@@ -511,21 +504,14 @@ func (p *proxy) UpdateEndpoints(epOld, epNew *v1.Endpoints) {
 	klog.V(6).Infof("UpdateEndpoint for endpoint: %s/%s", epNew.Namespace, epNew.Name)
 	// Check if the version of Last Known Endpoint's version matches with epOld version
 	// mismatch would indicate lost update.
-	var storedEp *v1.Endpoints
-	ver, err := p.cache.getCachedEpVersion(epNew.Name, epNew.Namespace)
+	storedEp, err := p.cache.getLastKnownEpFromCache(epNew.Name, epNew.Namespace)
 	if err != nil {
 		klog.Errorf("UpdateEndpoint did not find Endpoint %s/%s in cache, it is a bug, please file an issue", epNew.Namespace, epNew.Name)
-		storedEp = epOld
-	} else {
-		// TODO add logic to check version, if oldEp's version more recent than storedEp, then use oldEp as the most current old object.
-		oldVer := epOld.ObjectMeta.GetResourceVersion()
-		if oldVer != ver {
-			klog.Warningf("mismatch version detected between old Endpoint %s/%s and last known stored in cache %s/%s",
-				epNew.Namespace, epNew.Name, oldVer, ver)
-		}
-		storedEp, _ = p.cache.getLastKnownEpFromCache(epNew.Name, epNew.Namespace)
-	}
-	// Check for new Endpoint's ports, if found adding them into EndpointMap and corresponding programming rules.
+		// Since cache does not have old known endpoint entry, cannot handle Update properly
+		// storing epNew in cache and exit
+		p.cache.storeEpInCache(epNew)
+		return
+	} // Check for new Endpoint's ports, if found adding them into EndpointMap and corresponding programming rules.
 	info, err := processEpSubsets(epNew)
 	if err != nil {
 		klog.Errorf("failed to update Endpoint %s/%s with error: %+v", epNew.Namespace, epNew.Name, err)

@@ -31,7 +31,6 @@ import (
 	"github.com/sbezverk/nfproxy/pkg/nftables"
 	"github.com/sbezverk/nfproxy/pkg/proxy"
 	v1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/tools/record"
 	"k8s.io/component-base/logs"
@@ -121,14 +120,15 @@ func main() {
 	}
 
 	controller := controller.NewController(client, nfproxy)
-	if err := controller.Run(wait.NeverStop); err != nil {
-		klog.Errorf("nfproxy failed to start the controller with error: %s", err)
-		os.Exit(1)
-	}
-
+	controller.Start()
+	//		if err := controller.Run(wait.NeverStop); err != nil {
+	//			klog.Errorf("nfproxy failed to start the controller with error: %s", err)
+	//			os.Exit(1)
+	//		}
 	stopCh := setupSignalHandler()
 	<-stopCh
 	klog.Info("Received stop signal, shuting down controller")
+	controller.Stop()
 
 	os.Exit(0)
 }

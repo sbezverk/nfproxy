@@ -17,13 +17,13 @@ limitations under the License.
 package controller
 
 import (
+	"context"
 	"fmt"
-	"time"
 
 	v1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
-	"k8s.io/apimachinery/pkg/util/wait"
-	"k8s.io/client-go/informers"
+	"k8s.io/apimachinery/pkg/watch"
 	informer "k8s.io/client-go/informers/core/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/cache"
@@ -34,7 +34,8 @@ import (
 
 // Controller exposes methods for Services and Endpoints controllers
 type Controller interface {
-	Run(<-chan struct{}) error
+	Start()
+	Stop()
 }
 
 type controller struct {
@@ -42,49 +43,35 @@ type controller struct {
 	servicesSynced  cache.InformerSynced
 	endpoints       informer.EndpointsInformer
 	endpointsSynced cache.InformerSynced
-	proxy           proxy.Proxy
+
+	epWatcher        watch.Interface
+	svcWatcher       watch.Interface
+	epWatcherCancel  context.CancelFunc
+	svcWatcherCancel context.CancelFunc
+	epWatcherCtx     context.Context
+	svcWatcherCtx    context.Context
+	proxy            proxy.Proxy
 }
 
 func (c *controller) handleAddService(obj interface{}) {
-	if !c.servicesSynced() {
-		return
-	}
 	svc, ok := obj.(*v1.Service)
 	if !ok {
 		utilruntime.HandleError(fmt.Errorf("unexpected object type: %v", obj))
 		return
 	}
-	//	if svc.Name == "app2" {
 	c.proxy.AddService(svc)
-	//	}
 }
 
-func (c *controller) handleUpdateService(oldObj, newObj interface{}) {
-	if !c.servicesSynced() {
-		return
-	}
-	svcOld, ok := oldObj.(*v1.Service)
-	if !ok {
-		utilruntime.HandleError(fmt.Errorf("unexpected object type: %v", oldObj))
-		return
-	}
+func (c *controller) handleUpdateService(newObj interface{}) {
 	svcNew, ok := newObj.(*v1.Service)
 	if !ok {
 		utilruntime.HandleError(fmt.Errorf("unexpected object type: %v", newObj))
 		return
 	}
-	if svcOld.ObjectMeta.ResourceVersion == svcNew.ObjectMeta.ResourceVersion {
-		return
-	}
-	//	if svcNew.Name == "app2" || svcOld.Name == "app2" {
-	c.proxy.UpdateService(svcOld, svcNew)
-	//	}
+	c.proxy.UpdateService(svcNew)
 }
 
 func (c *controller) handleDeleteService(obj interface{}) {
-	if !c.servicesSynced() {
-		return
-	}
 	svc, ok := obj.(*v1.Service)
 	if !ok {
 		tombstone, ok := obj.(cache.DeletedFinalStateUnknown)
@@ -97,47 +84,26 @@ func (c *controller) handleDeleteService(obj interface{}) {
 			return
 		}
 	}
-	//	if svc.Name == "app2" {
 	c.proxy.DeleteService(svc)
-	//	}
 }
 
 func (c *controller) handleAddEndpoint(obj interface{}) {
-	if !c.endpointsSynced() {
-		return
-	}
 	ep, ok := obj.(*v1.Endpoints)
 	if !ok {
 		utilruntime.HandleError(fmt.Errorf("unexpected object type: %v", obj))
 		return
 	}
 	klog.V(5).Infof("controller received add endpoint event for %s/%s", ep.Namespace, ep.Name)
-	//	if ep.Name == "app2" {
 	c.proxy.AddEndpoints(ep)
-	//	}
 }
 
-func (c *controller) handleUpdateEndpoint(oldObj, newObj interface{}) {
-	if !c.endpointsSynced() {
-		return
-	}
-	epOld, ok := oldObj.(*v1.Endpoints)
-	if !ok {
-		utilruntime.HandleError(fmt.Errorf("unexpected object type: %v", oldObj))
-		return
-	}
+func (c *controller) handleUpdateEndpoint(newObj interface{}) {
 	epNew, ok := newObj.(*v1.Endpoints)
 	if !ok {
 		utilruntime.HandleError(fmt.Errorf("unexpected object type: %v", newObj))
 		return
 	}
-
-	if epOld.ObjectMeta.ResourceVersion == epNew.ObjectMeta.ResourceVersion {
-		return
-	}
-	//	if epOld.Name == "app2" || epNew.Name == "app2" {
-	c.proxy.UpdateEndpoints(epOld, epNew)
-	//	}
+	c.proxy.UpdateEndpoints(epNew)
 }
 
 func (c *controller) handleDeleteEndpoint(obj interface{}) {
@@ -156,53 +122,94 @@ func (c *controller) handleDeleteEndpoint(obj interface{}) {
 			return
 		}
 	}
-	//	if ep.Name == "app2" {
 	c.proxy.DeleteEndpoints(ep)
-	//	}
 }
 
-func (c *controller) Run(stopCh <-chan struct{}) error {
-	defer utilruntime.HandleCrash()
-
-	if ok := cache.WaitForCacheSync(stopCh, c.servicesSynced); !ok {
-		return fmt.Errorf("failed to wait for caches to sync")
+func (c *controller) watchForEndpoints(epEvents watch.Interface) {
+	var recv watch.Event
+	var ok bool
+	for {
+		select {
+		case recv, ok = <-epEvents.ResultChan():
+			if !ok {
+				klog.Info("endpoints watcher channel has been closed")
+				return
+			}
+			switch recv.Type {
+			case watch.Added:
+				go c.handleAddEndpoint(recv.Object)
+			case watch.Deleted:
+				go c.handleDeleteEndpoint(recv.Object)
+			case watch.Modified:
+				go c.handleUpdateEndpoint(recv.Object)
+			default:
+			}
+		case <-c.epWatcherCtx.Done():
+			klog.Info("endpoints watcher recieved stop signal")
+			return
+		}
 	}
-	klog.Info("Services cache has synced...")
-	if ok := cache.WaitForCacheSync(stopCh, c.endpointsSynced); !ok {
-		return fmt.Errorf("failed to wait for caches to sync")
+}
+
+func (c *controller) watchForServices(svcEvents watch.Interface) {
+	var recv watch.Event
+	var ok bool
+	for {
+		select {
+		case recv, ok = <-svcEvents.ResultChan():
+			if !ok {
+				klog.Info("services watcher channel has been closed")
+				return
+			}
+			switch recv.Type {
+			case watch.Added:
+				go c.handleAddService(recv.Object)
+			case watch.Deleted:
+				go c.handleDeleteService(recv.Object)
+			case watch.Modified:
+				go c.handleUpdateService(recv.Object)
+			default:
+			}
+		case <-c.svcWatcherCtx.Done():
+			klog.Info("services watcher recieved stop signal")
+			return
+		}
 	}
+}
 
-	klog.Info("Endpoints cache has synced...")
+func (c *controller) Start() {
+	go c.watchForEndpoints(c.epWatcher)
+	go c.watchForServices(c.svcWatcher)
+}
 
-	return nil
+func (c *controller) Stop() {
+	c.epWatcherCancel()
+	c.svcWatcherCancel()
 }
 
 // NewController return a new instance of Services and Endpoints controller
 func NewController(clientset *kubernetes.Clientset, proxy proxy.Proxy) Controller {
 	klog.Info("Setting up new Services and Endpoints controller...")
+	epCtx, epCancel := context.WithCancel(context.TODO())
+	svcCtx, svcCancel := context.WithCancel(context.TODO())
 	controller := controller{
-		proxy: proxy,
+		proxy:            proxy,
+		epWatcherCancel:  epCancel,
+		svcWatcherCancel: svcCancel,
+		epWatcherCtx:     epCtx,
+		svcWatcherCtx:    svcCtx,
 	}
-	informerFactory := informers.NewSharedInformerFactoryWithOptions(clientset, time.Minute*5)
-	// Setting up Services informer
-	controller.services = informerFactory.Core().V1().Services()
-	controller.services.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
-		AddFunc:    controller.handleAddService,
-		UpdateFunc: controller.handleUpdateService,
-		DeleteFunc: controller.handleDeleteService,
-	})
-	// Setting up Endpoints informer
-	controller.endpoints = informerFactory.Core().V1().Endpoints()
-	controller.endpoints.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
-		AddFunc:    controller.handleAddEndpoint,
-		UpdateFunc: controller.handleUpdateEndpoint,
-		DeleteFunc: controller.handleDeleteEndpoint,
-	})
+	epWatcher, err := clientset.CoreV1().Endpoints("").Watch(metav1.ListOptions{})
+	if err != nil {
+		return nil
+	}
+	controller.epWatcher = epWatcher
 
-	controller.servicesSynced = controller.services.Informer().HasSynced
-	controller.endpointsSynced = controller.endpoints.Informer().HasSynced
-	informerFactory.Start(wait.NeverStop)
-	klog.Info("controller is ready...")
+	svcWatcher, err := clientset.CoreV1().Services("").Watch(metav1.ListOptions{})
+	if err != nil {
+		return nil
+	}
+	controller.svcWatcher = svcWatcher
 
 	return &controller
 }
