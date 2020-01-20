@@ -1,7 +1,9 @@
 
 [![Build Status](https://travis-ci.org/sbezverk/nfproxy.svg?branch=master)](https://travis-ci.org/sbezverk/nfproxy)
 
-![nfproxy](Logo_final.png)
+<p align="left">
+  <img src="https://github.com/sbezverk/nfproxy/blob/master/Logo_final.png?raw=true" width="40%" height="40%">
+</p>
 
 ## kubernetes proxy functionality based on nftables
 
