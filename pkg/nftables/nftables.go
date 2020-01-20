@@ -146,8 +146,6 @@ func getNFTInterface(ti nftableslib.TablesInterface) (*NFTInterface, error) {
 func AddEndpointRules(nfti *NFTInterface, tableFamily nftables.TableFamily, chain string,
 	ipaddr string, proto v1.Protocol, port int32) ([]uint64, error) {
 	ci := ciForTableFamily(nfti, tableFamily)
-	protoByte := protoByteFromV1Proto(proto)
-
 	dnat := &nftableslib.NATAttributes{
 		L3Addr:      [2]*nftableslib.IPAddr{setIPAddr(ipaddr)},
 		FullyRandom: true,
@@ -157,6 +155,9 @@ func AddEndpointRules(nfti *NFTInterface, tableFamily nftables.TableFamily, chai
 	}
 	dnatAction, _ := nftableslib.SetDNAT(dnat)
 	rules := []nftableslib.Rule{
+		{
+			Counter: &nftableslib.Counter{},
+		},
 		{
 			// -A KUBE-SEP-FS3FUULGZPVD4VYB -s 57.112.0.247/32 -j KUBE-MARK-MASQ
 			L3: &nftableslib.L3Rule{
@@ -172,10 +173,6 @@ func AddEndpointRules(nfti *NFTInterface, tableFamily nftables.TableFamily, chai
 			},
 		},
 		{
-			// -A KUBE-SEP-FS3FUULGZPVD4VYB -p tcp -m tcp -j DNAT --to-destination 57.112.0.247:8080
-			L4: &nftableslib.L4Rule{
-				L4Proto: protoByte,
-			},
 			Action: dnatAction,
 		},
 	}
@@ -452,12 +449,15 @@ func ProgramServiceEndpoints(nfti *NFTInterface, tableFamily nftables.TableFamil
 
 	ci := ciForTableFamily(nfti, tableFamily)
 
-	loadbalanceAction, err := nftableslib.SetLoadbalance(epchains)
+	loadbalanceAction, err := nftableslib.SetLoadbalance(epchains, unix.NFT_GOTO, unix.NFT_NG_INCREMENTAL)
 	if err != nil {
 		return nil, err
 	}
 	rule := nftableslib.Rule{
 		Action: loadbalanceAction,
+	}
+	counter := nftableslib.Rule{
+		Counter: &nftableslib.Counter{},
 	}
 	ri, err := ci.Chains().Chain(chain)
 	if err != nil {
@@ -468,6 +468,11 @@ func ProgramServiceEndpoints(nfti *NFTInterface, tableFamily nftables.TableFamil
 		id, err = ri.Rules().CreateImm(&rule)
 		if err != nil {
 			return nil, fmt.Errorf("fail to program endpoints rules for service chain %s with error: %+v", chain, err)
+		}
+		// Adding counter after the loadbalancing rule to see service's packets
+		_, err = ri.Rules().CreateImm(&counter)
+		if err != nil {
+			return nil, fmt.Errorf("fail to program counter rule for service chain %s with error: %+v", chain, err)
 		}
 	} else {
 		// Service has previously progrmmed endpoint rule, need to Insert a new rule and then delete the old one
