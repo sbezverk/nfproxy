@@ -18,37 +18,35 @@ package controller
 
 import (
 	"fmt"
-	"time"
 
 	v1 "k8s.io/api/core/v1"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
-	"k8s.io/apimachinery/pkg/util/wait"
-	"k8s.io/client-go/informers"
-	informer "k8s.io/client-go/informers/core/v1"
+	corev1informer "k8s.io/client-go/informers/core/v1"
 	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/kubernetes/scheme"
+	typedcorev1 "k8s.io/client-go/kubernetes/typed/core/v1"
 	"k8s.io/client-go/tools/cache"
+	"k8s.io/client-go/tools/record"
 	"k8s.io/klog"
 
 	"github.com/sbezverk/nfproxy/pkg/proxy"
 )
 
-// Controller exposes methods for Services and Endpoints controllers
+const controllerAgentName = "nfproxy"
+
 type Controller interface {
-	Run(<-chan struct{}) error
+	Start(<-chan struct{}) error
 }
 
 type controller struct {
-	services        informer.ServiceInformer
-	servicesSynced  cache.InformerSynced
-	endpoints       informer.EndpointsInformer
-	endpointsSynced cache.InformerSynced
-	proxy           proxy.Proxy
+	kubeClientset kubernetes.Interface
+	svcsSynced    cache.InformerSynced
+	epsSynced     cache.InformerSynced
+	recorder      record.EventRecorder
+	proxy         proxy.Proxy
 }
 
 func (c *controller) handleAddService(obj interface{}) {
-	if !c.servicesSynced() {
-		return
-	}
 	svc, ok := obj.(*v1.Service)
 	if !ok {
 		utilruntime.HandleError(fmt.Errorf("unexpected object type: %v", obj))
@@ -60,9 +58,6 @@ func (c *controller) handleAddService(obj interface{}) {
 }
 
 func (c *controller) handleUpdateService(oldObj, newObj interface{}) {
-	if !c.servicesSynced() {
-		return
-	}
 	svcOld, ok := oldObj.(*v1.Service)
 	if !ok {
 		utilruntime.HandleError(fmt.Errorf("unexpected object type: %v", oldObj))
@@ -82,9 +77,6 @@ func (c *controller) handleUpdateService(oldObj, newObj interface{}) {
 }
 
 func (c *controller) handleDeleteService(obj interface{}) {
-	if !c.servicesSynced() {
-		return
-	}
 	svc, ok := obj.(*v1.Service)
 	if !ok {
 		tombstone, ok := obj.(cache.DeletedFinalStateUnknown)
@@ -103,23 +95,18 @@ func (c *controller) handleDeleteService(obj interface{}) {
 }
 
 func (c *controller) handleAddEndpoint(obj interface{}) {
-	if !c.endpointsSynced() {
-		return
-	}
 	ep, ok := obj.(*v1.Endpoints)
 	if !ok {
 		utilruntime.HandleError(fmt.Errorf("unexpected object type: %v", obj))
 		return
 	}
+	klog.V(5).Infof("controller received add endpoint event for %s/%s", ep.Namespace, ep.Name)
 	//	if ep.Name == "app2" {
 	c.proxy.AddEndpoints(ep)
 	//	}
 }
 
 func (c *controller) handleUpdateEndpoint(oldObj, newObj interface{}) {
-	if !c.endpointsSynced() {
-		return
-	}
 	epOld, ok := oldObj.(*v1.Endpoints)
 	if !ok {
 		utilruntime.HandleError(fmt.Errorf("unexpected object type: %v", oldObj))
@@ -140,9 +127,6 @@ func (c *controller) handleUpdateEndpoint(oldObj, newObj interface{}) {
 }
 
 func (c *controller) handleDeleteEndpoint(obj interface{}) {
-	if !c.endpointsSynced() {
-		return
-	}
 	ep, ok := obj.(*v1.Endpoints)
 	if !ok {
 		tombstone, ok := obj.(cache.DeletedFinalStateUnknown)
@@ -160,48 +144,58 @@ func (c *controller) handleDeleteEndpoint(obj interface{}) {
 	//	}
 }
 
-func (c *controller) Run(stopCh <-chan struct{}) error {
+func (c *controller) Start(stopCh <-chan struct{}) error {
 	defer utilruntime.HandleCrash()
 
-	if ok := cache.WaitForCacheSync(stopCh, c.servicesSynced); !ok {
-		return fmt.Errorf("failed to wait for caches to sync")
-	}
-	klog.Info("Services cache has synced...")
-	if ok := cache.WaitForCacheSync(stopCh, c.endpointsSynced); !ok {
-		return fmt.Errorf("failed to wait for caches to sync")
-	}
+	// Start the informer factories to begin populating the informer caches
+	klog.Info("Starting nfproxy controller")
 
-	klog.Info("Endpoints cache has synced...")
+	// Wait for the caches to be synced before starting workers
+	klog.Info("Waiting for informer caches to sync")
+	if ok := cache.WaitForCacheSync(stopCh, c.svcsSynced); !ok {
+		return fmt.Errorf("failed to wait for caches to sync")
+	}
+	if ok := cache.WaitForCacheSync(stopCh, c.epsSynced); !ok {
+		return fmt.Errorf("failed to wait for caches to sync")
+	}
 
 	return nil
 }
 
-// NewController return a new instance of Services and Endpoints controller
-func NewController(clientset *kubernetes.Clientset, proxy proxy.Proxy) Controller {
-	klog.Info("Setting up new Services and Endpoints controller...")
-	controller := controller{
-		proxy: proxy,
+// NewController returns a new cnat controller
+func NewController(
+	proxy proxy.Proxy,
+	kubeClientset kubernetes.Interface,
+	svcInformer corev1informer.ServiceInformer,
+	epInformer corev1informer.EndpointsInformer) Controller {
+
+	klog.V(4).Info("Creating event broadcaster")
+	eventBroadcaster := record.NewBroadcaster()
+	eventBroadcaster.StartLogging(klog.Infof)
+	eventBroadcaster.StartRecordingToSink(&typedcorev1.EventSinkImpl{Interface: kubeClientset.CoreV1().Events("")})
+	recorder := eventBroadcaster.NewRecorder(scheme.Scheme, v1.EventSource{Component: controllerAgentName})
+
+	controller := &controller{
+		kubeClientset: kubeClientset,
+		svcsSynced:    svcInformer.Informer().HasSynced,
+		epsSynced:     epInformer.Informer().HasSynced,
+		recorder:      recorder,
+		proxy:         proxy,
 	}
-	informerFactory := informers.NewSharedInformerFactoryWithOptions(clientset, time.Minute*5)
-	// Setting up Services informer
-	controller.services = informerFactory.Core().V1().Services()
-	controller.services.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
+
+	klog.Info("Setting up event handlers")
+
+	// Set up an event handler for when Svc resources change
+	svcInformer.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
 		AddFunc:    controller.handleAddService,
 		UpdateFunc: controller.handleUpdateService,
 		DeleteFunc: controller.handleDeleteService,
 	})
-	// Setting up Endpoints informer
-	controller.endpoints = informerFactory.Core().V1().Endpoints()
-	controller.endpoints.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
+
+	epInformer.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
 		AddFunc:    controller.handleAddEndpoint,
 		UpdateFunc: controller.handleUpdateEndpoint,
 		DeleteFunc: controller.handleDeleteEndpoint,
 	})
-
-	controller.servicesSynced = controller.services.Informer().HasSynced
-	controller.endpointsSynced = controller.endpoints.Informer().HasSynced
-	informerFactory.Start(wait.NeverStop)
-	klog.Info("controller is ready...")
-
-	return &controller
+	return controller
 }

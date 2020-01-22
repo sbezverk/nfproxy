@@ -39,21 +39,6 @@ func servicePortSvcID(servicePortName string, protocol string, service string) s
 	return encoded[:16]
 }
 
-// getServicePortEndpointChains return a slice of strings containing a specific ServicePortName all endpoints chains
-func (p *proxy) getServicePortEndpointChains(svcPortName ServicePortName, tableFamily utilnftables.TableFamily) []string {
-	chains := []string{}
-	for _, ep := range p.endpointsMap[svcPortName] {
-		epBase, ok := ep.(*endpointsInfo)
-		if !ok {
-			// Not recognize, skipping it
-			continue
-		}
-		chains = append(chains, epBase.epnft.Rule[tableFamily].Chain)
-	}
-
-	return chains
-}
-
 func getSvcPortName(name, namespace string, portName string, protocol v1.Protocol) ServicePortName {
 	return ServicePortName{
 		NamespacedName: types.NamespacedName{Namespace: namespace, Name: name},

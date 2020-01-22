@@ -24,11 +24,15 @@ import (
 	"syscall"
 	"time"
 
+	"net/http"
+	_ "net/http/pprof"
+
 	"github.com/sbezverk/nfproxy/pkg/controller"
 	"github.com/sbezverk/nfproxy/pkg/nftables"
 	"github.com/sbezverk/nfproxy/pkg/proxy"
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/util/wait"
+	kubeinformers "k8s.io/client-go/informers"
 	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/tools/record"
 	"k8s.io/component-base/logs"
@@ -71,6 +75,9 @@ func main() {
 	logs.InitLogs()
 	defer logs.FlushLogs()
 
+	go func() {
+		klog.Info(http.ListenAndServe("localhost:6767", nil))
+	}()
 	// Get kubernetes client set
 	client, err := controller.GetClientset(kubeconfig)
 	if err != nil {
@@ -114,10 +121,14 @@ func main() {
 		}
 	}
 
-	controller := controller.NewController(client, nfproxy)
-	if err := controller.Run(wait.NeverStop); err != nil {
-		klog.Errorf("nfproxy failed to start the controller with error: %s", err)
-		os.Exit(1)
+	kubeInformerFactory := kubeinformers.NewSharedInformerFactory(client, time.Minute*10)
+
+	controller := controller.NewController(nfproxy, client, kubeInformerFactory.Core().V1().Services(), kubeInformerFactory.Core().V1().Endpoints())
+
+	kubeInformerFactory.Start(wait.NeverStop)
+
+	if err = controller.Start(wait.NeverStop); err != nil {
+		klog.Fatalf("Error running controller: %s", err.Error())
 	}
 
 	stopCh := setupSignalHandler()

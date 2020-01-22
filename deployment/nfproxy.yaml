@@ -90,7 +90,7 @@ spec:
       hostNetwork: true
       containers:
         - name: nfproxy
-          image: docker.io/sbezverk/nfproxy:0.0.0
+          image: docker.io/sbezverk/nfproxy-debug:0.0.0
           imagePullPolicy: Always
           securityContext:
             privileged: true
@@ -101,6 +101,8 @@ spec:
             - "57.112.0.0/12"
             - --ipv6clustercidr
             - ""
+            - --v
+            - "5"
           env:
             - name: NFPROXY_IP
               valueFrom:
