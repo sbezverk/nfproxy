@@ -449,15 +449,12 @@ func ProgramServiceEndpoints(nfti *NFTInterface, tableFamily nftables.TableFamil
 
 	ci := ciForTableFamily(nfti, tableFamily)
 
-	loadbalanceAction, err := nftableslib.SetLoadbalance(epchains, unix.NFT_GOTO, unix.NFT_NG_INCREMENTAL)
+	loadbalanceAction, err := nftableslib.SetLoadbalance(epchains, unix.NFT_JUMP, unix.NFT_NG_RANDOM)
 	if err != nil {
 		return nil, err
 	}
 	rule := nftableslib.Rule{
 		Action: loadbalanceAction,
-	}
-	counter := nftableslib.Rule{
-		Counter: &nftableslib.Counter{},
 	}
 	ri, err := ci.Chains().Chain(chain)
 	if err != nil {
@@ -468,11 +465,6 @@ func ProgramServiceEndpoints(nfti *NFTInterface, tableFamily nftables.TableFamil
 		id, err = ri.Rules().CreateImm(&rule)
 		if err != nil {
 			return nil, fmt.Errorf("fail to program endpoints rules for service chain %s with error: %+v", chain, err)
-		}
-		// Adding counter after the loadbalancing rule to see service's packets
-		_, err = ri.Rules().CreateImm(&counter)
-		if err != nil {
-			return nil, fmt.Errorf("fail to program counter rule for service chain %s with error: %+v", chain, err)
 		}
 	} else {
 		// Service has previously progrmmed endpoint rule, need to Insert a new rule and then delete the old one
