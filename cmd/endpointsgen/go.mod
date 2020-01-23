@@ -1,21 +1,25 @@
-module github.com/sbezverk/nfproxy
+module stresstestv2
 
 go 1.13
 
 require (
-	github.com/google/nftables v0.0.0-20200121073940-88b35b63a920
-	github.com/sbezverk/nftableslib v0.0.0-20200121131003-8e44c3f3d825
+	github.com/golang/glog v0.0.0-20160126235308-23def4e6c14b
+	github.com/google/nftables v0.0.0-20200114154937-bf895afbc6b3
+	github.com/sbezverk/nfproxy v0.0.0-20200116155541-f545c2592447
+	github.com/sbezverk/nfproxy/pkg/endpointsgen v0.0.0-00010101000000-000000000000
+	github.com/sbezverk/nftableslib v0.0.0-20200114155746-9e7edb5c7434
 	golang.org/x/sys v0.0.0-20191220220014-0732a990476f
-	k8s.io/api v0.17.0
-	k8s.io/apimachinery v0.17.0
-	k8s.io/client-go v0.17.0
+	k8s.io/api v0.17.1
+	k8s.io/apimachinery v0.17.1
+	k8s.io/client-go v11.0.0+incompatible
 	k8s.io/component-base v0.17.0
 	k8s.io/klog v1.0.0
 	k8s.io/kubernetes v1.17.0
-	k8s.io/utils v0.0.0-20191114184206-e782cd3c129f
+	k8s.io/utils v0.0.0-20200117235808-5f6fbceb4c31
 )
 
 replace (
+	github.com/sbezverk/nfproxy/pkg/endpointsgen => ../../pkg/endpointsgen
 	golang.org/x/sys => golang.org/x/sys v0.0.0-20190813064441-fde4db37ae7a // pinned to release-branch.go1.13
 	golang.org/x/tools => golang.org/x/tools v0.0.0-20190821162956-65e3620a7ae7 // pinned to release-branch.go1.13
 
@@ -64,5 +68,3 @@ replace (
 	k8s.io/metrics => k8s.io/metrics v0.17.0
 	k8s.io/sample-apiserver => k8s.io/sample-apiserver v0.17.0
 )
-
-replace github.com/google/nftables v0.0.0-20200121073940-88b35b63a920 => /home/sbezverk/development/go/workspace/linux/nftables
