@@ -12,7 +12,7 @@ import (
 )
 
 var (
-	kubeconfig     = flag.String("kubeconfig", "", "Absolute path to the kubeconfig file. Either this or master needs to be set if the provisioner is being run out of cluster.")
+	kubeconfig     = flag.String("kubeconfig", "", "Absolute path to the kubeconfig file.")
 	stackMode      = flag.String("stack-mode", "ipv4", "Defines which stack is tested, acceptable values are: ipv4, ipv6, dual")
 	svcNumber      = flag.Int("svc", 1, "Number of services to generate")
 	subsetNumber   = flag.Int("subset", 1, "Number of Subsets in a single endpoint")
