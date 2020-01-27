@@ -4,15 +4,16 @@ go 1.13
 
 require (
 	github.com/google/nftables v0.0.0-20200122213939-26bcabf49086
+	github.com/sbezverk/nfproxy/pkg/endpointsgen v0.0.0-20200123132715-2f86a494a51c // indirect
 	github.com/sbezverk/nftableslib v0.0.0-20200121131003-8e44c3f3d825
 	golang.org/x/sys v0.0.0-20191220220014-0732a990476f
-	k8s.io/api v0.17.0
-	k8s.io/apimachinery v0.17.0
-	k8s.io/client-go v0.17.0
+	k8s.io/api v0.17.1
+	k8s.io/apimachinery v0.17.1
+	k8s.io/client-go v11.0.0+incompatible
 	k8s.io/component-base v0.17.0
 	k8s.io/klog v1.0.0
 	k8s.io/kubernetes v1.17.0
-	k8s.io/utils v0.0.0-20191114184206-e782cd3c129f
+	k8s.io/utils v0.0.0-20200117235808-5f6fbceb4c31
 )
 
 replace (
