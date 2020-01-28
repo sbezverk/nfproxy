@@ -5,8 +5,9 @@ go 1.13
 require (
 	github.com/google/nftables v0.0.0-20200122213939-26bcabf49086
 	github.com/sbezverk/nfproxy/pkg/endpointsgen v0.0.0-20200123132715-2f86a494a51c // indirect
-	github.com/sbezverk/nftableslib v0.0.0-20200121131003-8e44c3f3d825
-	golang.org/x/sys v0.0.0-20191220220014-0732a990476f
+	github.com/sbezverk/nftableslib v0.0.0-20200124164141-dfec02af3c2e
+	golang.org/x/net v0.0.0-20200114155413-6afb5195e5aa // indirect
+	golang.org/x/sys v0.0.0-20200124204421-9fbb57f87de9
 	k8s.io/api v0.17.1
 	k8s.io/apimachinery v0.17.1
 	k8s.io/client-go v11.0.0+incompatible

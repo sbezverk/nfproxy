@@ -230,53 +230,14 @@ func (p *proxy) UpdateService(svcOld, svcNew *v1.Service) {
 		}
 		storedSvc, _ = p.cache.getLastKnownSvcFromCache(svcNew.Name, svcNew.Namespace)
 	}
-	for i := range svcNew.Spec.Ports {
-		servicePort := &svcNew.Spec.Ports[i]
-		svcPortName := getSvcPortName(svcNew.Name, svcNew.Namespace, servicePort.Name, servicePort.Protocol)
-		baseSvcInfo := newBaseServiceInfo(servicePort, svcNew)
-		id, found := isServicePortInPorts(storedSvc.Spec.Ports, servicePort)
-		if !found {
-			// Adding new service port
-			p.addServicePort(svcPortName, servicePort, svcNew, baseSvcInfo)
-			continue
-		}
-		// If ServicePortName does not match, it means Protocol/Port pair has not been changed,
-		// otherwise ServicePort would not have been found.
-		// Changes of Port.Name or Port.Protocol result in a new ServicePortName generated, hence the old one
-		// needs to be replaced.
-		oldServicePortName := getSvcPortName(storedSvc.Name, storedSvc.Namespace, storedSvc.Spec.Ports[id].Name, storedSvc.Spec.Ports[id].Protocol)
-		if storedSvc.Spec.Ports[id].Name != servicePort.Name {
-			// In case of a Port.Name change no reprogramming is required. All is required, copy old ServicePort's data and store it in
-			// the map with new svcPortName key.
-			if err := p.rekeyServicePort(oldServicePortName, svcPortName); err != nil {
-				klog.Warningf("update of ServicePortName failed with error %w", err)
-			}
-			klog.V(5).Infof("Rekeyed old Service port %+v with new %+v", oldServicePortName, svcPortName)
-			continue
-		}
-		// If Port.Protocol got changed to prevent traffic drop, first add updated to new Protocol:Port rules
-		// then remove the old ones
-		if storedSvc.Spec.Ports[id].Protocol != servicePort.Protocol ||
-			storedSvc.Spec.Ports[id].Port != servicePort.Port {
-			// Add updated ServicePort
-			p.addServicePort(svcPortName, servicePort, svcNew, baseSvcInfo)
-			// Deleting old ServicePort
-			p.deleteServicePort(oldServicePortName, &storedSvc.Spec.Ports[id], storedSvc)
-			klog.V(5).Infof("Service Port name has been updated old: %+v new: %+v", oldServicePortName, svcPortName)
-			continue
-		}
-	}
+	// Step 1 is to detect all changes with ServicePorts
+	// TODO (sbezverk) Check for changes for ServicePort's NodePort.
+	p.processServicePortChanges(svcNew, storedSvc)
+	// Step 2 is to detect changes for External IPs; add new and remove old ones
+	p.processExternalIPChanges(svcNew, storedSvc)
+	// Step 3 is to detect changes for LoadBalancer IPs; add new and remove old ones
+	p.processLoadBalancerIPChange(svcNew, storedSvc)
 
-	// Processing deleted or undiscoverably changed ServicePorts, if ServicePort exists in storedSvc.Spec.Ports but
-	// does not exist in svcNew.Spec.Ports delete it.
-	for i := range storedSvc.Spec.Ports {
-		servicePort := &storedSvc.Spec.Ports[i]
-		svcPortName := getSvcPortName(storedSvc.Name, storedSvc.Namespace, servicePort.Name, servicePort.Protocol)
-		if _, found := isServicePortInPorts(svcNew.Spec.Ports, servicePort); !found {
-			p.deleteServicePort(svcPortName, servicePort, storedSvc)
-			klog.V(5).Infof("removed Service port %+v", svcPortName)
-		}
-	}
 	// Update service in cache after applying all changes
 	p.cache.storeSvcInCache(svcNew)
 }
@@ -631,4 +592,101 @@ func (p *proxy) getServicePortEndpointChains(svcPortName ServicePortName, tableF
 	}
 
 	return chains
+}
+
+func (p *proxy) processServicePortChanges(svcNew *v1.Service, storedSvc *v1.Service) {
+	for i := range svcNew.Spec.Ports {
+		servicePort := &svcNew.Spec.Ports[i]
+		svcPortName := getSvcPortName(svcNew.Name, svcNew.Namespace, servicePort.Name, servicePort.Protocol)
+		baseSvcInfo := newBaseServiceInfo(servicePort, svcNew)
+		id, found := isServicePortInPorts(storedSvc.Spec.Ports, servicePort)
+		if !found {
+			// Adding new service port
+			p.addServicePort(svcPortName, servicePort, svcNew, baseSvcInfo)
+			continue
+		}
+		// If ServicePortName does not match, it means Protocol/Port pair has not been changed,
+		// otherwise ServicePort would not have been found.
+		// Changes of Port.Name or Port.Protocol result in a new ServicePortName generated, hence the old one
+		// needs to be replaced.
+		oldServicePortName := getSvcPortName(storedSvc.Name, storedSvc.Namespace, storedSvc.Spec.Ports[id].Name, storedSvc.Spec.Ports[id].Protocol)
+		if storedSvc.Spec.Ports[id].Name != servicePort.Name {
+			// In case of a Port.Name change no reprogramming is required. All is required, copy old ServicePort's data and store it in
+			// the map with new svcPortName key.
+			if err := p.rekeyServicePort(oldServicePortName, svcPortName); err != nil {
+				klog.Warningf("update of ServicePortName failed with error %w", err)
+			}
+			klog.V(5).Infof("Rekeyed old Service port %+v with new %+v", oldServicePortName, svcPortName)
+			continue
+		}
+		// If Port.Protocol got changed to prevent traffic drop, first add updated to new Protocol:Port rules
+		// then remove the old ones
+		if storedSvc.Spec.Ports[id].Protocol != servicePort.Protocol ||
+			storedSvc.Spec.Ports[id].Port != servicePort.Port {
+			// Add updated ServicePort
+			p.addServicePort(svcPortName, servicePort, svcNew, baseSvcInfo)
+			// Deleting old ServicePort
+			p.deleteServicePort(oldServicePortName, &storedSvc.Spec.Ports[id], storedSvc)
+			klog.V(5).Infof("Service Port name has been updated old: %+v new: %+v", oldServicePortName, svcPortName)
+			continue
+		}
+	}
+	// Processing deleted or undiscoverably changed ServicePorts, if ServicePort exists in storedSvc.Spec.Ports but
+	// does not exist in svcNew.Spec.Ports delete it.
+	for i := range storedSvc.Spec.Ports {
+		servicePort := &storedSvc.Spec.Ports[i]
+		svcPortName := getSvcPortName(storedSvc.Name, storedSvc.Namespace, servicePort.Name, servicePort.Protocol)
+		if _, found := isServicePortInPorts(svcNew.Spec.Ports, servicePort); !found {
+			p.deleteServicePort(svcPortName, servicePort, storedSvc)
+			klog.V(5).Infof("removed Service port %+v", svcPortName)
+		}
+	}
+
+}
+
+func (p *proxy) processExternalIPChanges(svcNew *v1.Service, storedSvc *v1.Service) {
+	if !compareSliceOfString(storedSvc.Spec.ExternalIPs, svcNew.Spec.ExternalIPs) {
+		// Check for new ExternalIPs to add
+		for _, addr := range svcNew.Spec.ExternalIPs {
+			if isStringInSlice(addr, storedSvc.Spec.ExternalIPs) {
+				continue
+			}
+			klog.V(5).Infof("detected a new ExternalIP %s", addr)
+			tableFamily := utilnftables.TableFamilyIPv4
+			if utilnet.IsIPv6String(addr) {
+				tableFamily = utilnftables.TableFamilyIPv6
+			}
+			for _, servicePort := range svcNew.Spec.Ports {
+				svcPortName := getSvcPortName(svcNew.Name, svcNew.Namespace, servicePort.Name, servicePort.Protocol)
+				svc := p.serviceMap[svcPortName].(*serviceInfo).BaseServiceInfo.String()
+				svcID := servicePortSvcID(svcPortName.String(), string(servicePort.Protocol), svc)
+				nftables.AddToSet(p.nfti, tableFamily, servicePort.Protocol, addr, uint16(servicePort.Port), nftables.K8sExternalIPSet, nftables.K8sSvcPrefix+svcID)
+				nftables.AddToSet(p.nfti, tableFamily, servicePort.Protocol, addr, uint16(servicePort.Port), nftables.K8sMarkMasqSet, nftables.K8sNATDoMarkMasq)
+			}
+		}
+		// Check for ExternalIPs to delete
+		for _, addr := range storedSvc.Spec.ExternalIPs {
+			if isStringInSlice(addr, svcNew.Spec.ExternalIPs) {
+				continue
+			}
+			klog.V(5).Infof("detected deleted ExternalIP %s", addr)
+			tableFamily := utilnftables.TableFamilyIPv4
+			if utilnet.IsIPv6String(addr) {
+				tableFamily = utilnftables.TableFamilyIPv6
+			}
+			for _, servicePort := range svcNew.Spec.Ports {
+				svcPortName := getSvcPortName(svcNew.Name, svcNew.Namespace, servicePort.Name, servicePort.Protocol)
+				svcBaseInfoString := p.serviceMap[svcPortName].(*serviceInfo).BaseServiceInfo.String()
+				svcID := servicePortSvcID(svcPortName.String(), string(servicePort.Protocol), svcBaseInfoString)
+				nftables.RemoveFromSet(p.nfti, tableFamily, servicePort.Protocol, addr, uint16(servicePort.Port), nftables.K8sExternalIPSet, nftables.K8sSvcPrefix+svcID)
+				nftables.RemoveFromSet(p.nfti, tableFamily, servicePort.Protocol, addr, uint16(servicePort.Port), nftables.K8sMarkMasqSet, nftables.K8sNATDoMarkMasq)
+			}
+		}
+	}
+}
+
+func (p *proxy) processLoadBalancerIPChange(svcNew *v1.Service, storedSvc *v1.Service) {
+	if storedSvc.Spec.LoadBalancerIP != svcNew.Spec.LoadBalancerIP {
+		klog.Infof("detected change in LoadBalancerIP old: %s new: %s", storedSvc.Spec.LoadBalancerIP, svcNew.Spec.LoadBalancerIP)
+	}
 }
