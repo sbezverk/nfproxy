@@ -19,6 +19,7 @@ package proxy
 import (
 	"crypto/sha256"
 	"encoding/base32"
+	"strings"
 
 	utilnftables "github.com/google/nftables"
 	v1 "k8s.io/api/core/v1"
@@ -94,4 +95,27 @@ func isServicePortInPorts(ports []v1.ServicePort, servicePort *v1.ServicePort) (
 	// Port has not been found in the provided slice, indicating that it is either a new port
 	// or delete port.
 	return 0, false
+}
+
+func compareSliceOfString(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := 0; i < len(a); i++ {
+		if strings.Compare(a[i], b[i]) != 0 {
+			return false
+		}
+	}
+
+	return true
+}
+
+func isStringInSlice(a string, b []string) bool {
+	for _, s := range b {
+		if strings.Compare(a, s) == 0 {
+			return true
+		}
+	}
+
+	return false
 }
