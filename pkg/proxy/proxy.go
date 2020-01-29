@@ -594,6 +594,8 @@ func (p *proxy) getServicePortEndpointChains(svcPortName ServicePortName, tableF
 	return chains
 }
 
+// processServicePortChanges is called from the service Update handler, it checks for any changes in
+// ServicePorts and re-programs nftables.
 func (p *proxy) processServicePortChanges(svcNew *v1.Service, storedSvc *v1.Service) {
 	for i := range svcNew.Spec.Ports {
 		servicePort := &svcNew.Spec.Ports[i]
@@ -644,6 +646,8 @@ func (p *proxy) processServicePortChanges(svcNew *v1.Service, storedSvc *v1.Serv
 
 }
 
+// processExternalIPChanges is called from the service Update handler, it checks for any changes in
+// ExternalIPs and re-program new entries for all ServicePort of the changed service.
 func (p *proxy) processExternalIPChanges(svcNew *v1.Service, storedSvc *v1.Service) {
 	if !compareSliceOfString(storedSvc.Spec.ExternalIPs, svcNew.Spec.ExternalIPs) {
 		// Check for new ExternalIPs to add
@@ -685,8 +689,39 @@ func (p *proxy) processExternalIPChanges(svcNew *v1.Service, storedSvc *v1.Servi
 	}
 }
 
+// processLoadBalancerIPChange is called from the service Update handler, it checks for any changes in
+// ExternalIPs and re-program new entries for all ServicePort of the changed service.
 func (p *proxy) processLoadBalancerIPChange(svcNew *v1.Service, storedSvc *v1.Service) {
 	if storedSvc.Spec.LoadBalancerIP != svcNew.Spec.LoadBalancerIP {
-		klog.Infof("detected change in LoadBalancerIP old: %s new: %s", storedSvc.Spec.LoadBalancerIP, svcNew.Spec.LoadBalancerIP)
+		if svcNew.Spec.LoadBalancerIP != "" {
+			klog.V(5).Infof("adding new LoadBalancerIP: %s", svcNew.Spec.LoadBalancerIP)
+			addr := svcNew.Spec.LoadBalancerIP
+			tableFamily := utilnftables.TableFamilyIPv4
+			if utilnet.IsIPv6String(addr) {
+				tableFamily = utilnftables.TableFamilyIPv6
+			}
+			for _, servicePort := range svcNew.Spec.Ports {
+				svcPortName := getSvcPortName(svcNew.Name, svcNew.Namespace, servicePort.Name, servicePort.Protocol)
+				svc := p.serviceMap[svcPortName].(*serviceInfo).BaseServiceInfo.String()
+				svcID := servicePortSvcID(svcPortName.String(), string(servicePort.Protocol), svc)
+				nftables.AddToSet(p.nfti, tableFamily, servicePort.Protocol, addr, uint16(servicePort.Port), nftables.K8sLoadbalancerIPSet, nftables.K8sSvcPrefix+svcID)
+				nftables.AddToSet(p.nfti, tableFamily, servicePort.Protocol, addr, uint16(servicePort.Port), nftables.K8sMarkMasqSet, nftables.K8sNATDoMarkMasq)
+			}
+		}
+		if storedSvc.Spec.LoadBalancerIP != "" {
+			klog.V(5).Infof("removing old LoadBalancerIP: %s", storedSvc.Spec.LoadBalancerIP)
+			addr := storedSvc.Spec.LoadBalancerIP
+			tableFamily := utilnftables.TableFamilyIPv4
+			if utilnet.IsIPv6String(addr) {
+				tableFamily = utilnftables.TableFamilyIPv6
+			}
+			for _, servicePort := range svcNew.Spec.Ports {
+				svcPortName := getSvcPortName(svcNew.Name, svcNew.Namespace, servicePort.Name, servicePort.Protocol)
+				svc := p.serviceMap[svcPortName].(*serviceInfo).BaseServiceInfo.String()
+				svcID := servicePortSvcID(svcPortName.String(), string(servicePort.Protocol), svc)
+				nftables.RemoveFromSet(p.nfti, tableFamily, servicePort.Protocol, addr, uint16(servicePort.Port), nftables.K8sLoadbalancerIPSet, nftables.K8sSvcPrefix+svcID)
+				nftables.RemoveFromSet(p.nfti, tableFamily, servicePort.Protocol, addr, uint16(servicePort.Port), nftables.K8sMarkMasqSet, nftables.K8sNATDoMarkMasq)
+			}
+		}
 	}
 }
