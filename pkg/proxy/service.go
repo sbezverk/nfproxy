@@ -33,6 +33,8 @@ import (
 // or can be used for constructing a more specific ServiceInfo struct
 // defined by the proxier if needed.
 type BaseServiceInfo struct {
+	svcName                  string
+	svcNamespace             string
 	ipFamily                 v1.IPFamily
 	clusterIP                net.IP
 	port                     int
@@ -152,10 +154,12 @@ func newBaseServiceInfo(port *v1.ServicePort, service *v1.Service) *BaseServiceI
 		stickyMaxAgeSeconds = int(*service.Spec.SessionAffinityConfig.ClientIP.TimeoutSeconds)
 	}
 	info := &BaseServiceInfo{
-		clusterIP: net.ParseIP(service.Spec.ClusterIP),
-		port:      int(port.Port),
-		protocol:  port.Protocol,
-		nodePort:  int(port.NodePort),
+		svcName:      service.ObjectMeta.Name,
+		svcNamespace: service.ObjectMeta.Namespace,
+		clusterIP:    net.ParseIP(service.Spec.ClusterIP),
+		port:         int(port.Port),
+		protocol:     port.Protocol,
+		nodePort:     int(port.NodePort),
 		// Deep-copy in case the service instance changes
 		loadBalancerStatus:     *service.Status.LoadBalancer.DeepCopy(),
 		sessionAffinityType:    service.Spec.SessionAffinity,

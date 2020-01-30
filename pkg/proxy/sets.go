@@ -90,17 +90,25 @@ func (p *proxy) removeServicePortFromSets(servicePort ServicePort, tableFamily u
 			}
 		}
 	}
-	if lbIPs := servicePort.LoadBalancerIPStrings(); len(lbIPs) != 0 {
-		for _, lbIP := range lbIPs {
-			if err := nftables.RemoveFromSet(p.nfti, tableFamily, proto, lbIP, port, nftables.K8sLoadbalancerIPSet, nftables.K8sSvcPrefix+svcID); err != nil {
+	// Loadbalancer IP is taken from the last known services object stored in cache
+	svcName := servicePort.(*serviceInfo).BaseServiceInfo.svcName
+	svcNamespace := servicePort.(*serviceInfo).BaseServiceInfo.svcNamespace
+	if storedSvc, err := p.cache.getLastKnownSvcFromCache(svcName, svcNamespace); err == nil {
+		for _, lbIP := range storedSvc.Status.LoadBalancer.Ingress {
+			if err := nftables.RemoveFromSet(p.nfti, tableFamily, proto, lbIP.IP, port, nftables.K8sLoadbalancerIPSet, nftables.K8sSvcPrefix+svcID); err != nil {
 				return err
 			}
-			if err := nftables.RemoveFromSet(p.nfti, tableFamily, proto, lbIP, port, nftables.K8sMarkMasqSet, nftables.K8sNATDoMarkMasq); err != nil {
+			if err := nftables.RemoveFromSet(p.nfti, tableFamily, proto, lbIP.IP, port, nftables.K8sMarkMasqSet, nftables.K8sNATDoMarkMasq); err != nil {
 				return err
 			}
 		}
 	}
 
+	if nodePort := servicePort.NodePort(); nodePort != 0 {
+		if err := nftables.RemoveFromNodeportSet(p.nfti, tableFamily, proto, uint16(nodePort), nftables.K8sSvcPrefix+svcID); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
