@@ -19,6 +19,7 @@ package proxy
 import (
 	"fmt"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -82,6 +83,7 @@ func (p *proxy) AddService(svc *v1.Service) {
 	if svc == nil {
 		return
 	}
+	klog.V(6).Infof("AddService for a service Spec: %+v Status: %+v", svc.Spec, svc.Status)
 	svcName := types.NamespacedName{Namespace: svc.Namespace, Name: svc.Name}
 	if utilproxy.ShouldSkipService(svcName, svc) {
 		return
@@ -212,7 +214,7 @@ func (p *proxy) UpdateService(svcOld, svcNew *v1.Service) {
 	s := time.Now()
 	defer klog.V(5).Infof("UpdateService ran for: %d nanoseconds", time.Since(s))
 	klog.V(5).Infof("UpdateService for a service %s/%s", svcNew.Namespace, svcNew.Name)
-
+	klog.V(6).Infof("UpdateService for a service Spec: %+v Status: %+v", svcNew.Spec, svcNew.Status)
 	// Check if the version of Last Known Service's version matches with svcOld version
 	// mismatch would indicate lost update.
 	var storedSvc *v1.Service
@@ -692,36 +694,75 @@ func (p *proxy) processExternalIPChanges(svcNew *v1.Service, storedSvc *v1.Servi
 // processLoadBalancerIPChange is called from the service Update handler, it checks for any changes in
 // ExternalIPs and re-program new entries for all ServicePort of the changed service.
 func (p *proxy) processLoadBalancerIPChange(svcNew *v1.Service, storedSvc *v1.Service) {
-	if storedSvc.Spec.LoadBalancerIP != svcNew.Spec.LoadBalancerIP {
-		if svcNew.Spec.LoadBalancerIP != "" {
-			klog.V(5).Infof("adding new LoadBalancerIP: %s", svcNew.Spec.LoadBalancerIP)
-			addr := svcNew.Spec.LoadBalancerIP
-			tableFamily := utilnftables.TableFamilyIPv4
-			if utilnet.IsIPv6String(addr) {
-				tableFamily = utilnftables.TableFamilyIPv6
-			}
-			for _, servicePort := range svcNew.Spec.Ports {
-				svcPortName := getSvcPortName(svcNew.Name, svcNew.Namespace, servicePort.Name, servicePort.Protocol)
-				svc := p.serviceMap[svcPortName].(*serviceInfo).BaseServiceInfo.String()
-				svcID := servicePortSvcID(svcPortName.String(), string(servicePort.Protocol), svc)
-				nftables.AddToSet(p.nfti, tableFamily, servicePort.Protocol, addr, uint16(servicePort.Port), nftables.K8sLoadbalancerIPSet, nftables.K8sSvcPrefix+svcID)
-				nftables.AddToSet(p.nfti, tableFamily, servicePort.Protocol, addr, uint16(servicePort.Port), nftables.K8sMarkMasqSet, nftables.K8sNATDoMarkMasq)
+	// Check if new and stored service status is equal or not, if equal no processing required
+	if !isIngressEqual(svcNew.Status.LoadBalancer.Ingress, storedSvc.Status.LoadBalancer.Ingress) {
+		// Check new Service Loadbalancer status for entries missing in stored Service
+		for _, lbingress := range svcNew.Status.LoadBalancer.Ingress {
+			// TODO figure out what to do if addr.Host is used
+			if _, found := isAddressInIngress(storedSvc.Status.LoadBalancer.Ingress, lbingress.IP); !found {
+				klog.V(5).Infof("adding new LoadBalancerIP: %s", lbingress.IP)
+				addr := lbingress.IP
+				tableFamily := utilnftables.TableFamilyIPv4
+				if utilnet.IsIPv6String(addr) {
+					tableFamily = utilnftables.TableFamilyIPv6
+				}
+				for _, servicePort := range svcNew.Spec.Ports {
+					svcPortName := getSvcPortName(svcNew.Name, svcNew.Namespace, servicePort.Name, servicePort.Protocol)
+					svc := p.serviceMap[svcPortName].(*serviceInfo).BaseServiceInfo.String()
+					svcID := servicePortSvcID(svcPortName.String(), string(servicePort.Protocol), svc)
+					nftables.AddToSet(p.nfti, tableFamily, servicePort.Protocol, addr, uint16(servicePort.Port), nftables.K8sLoadbalancerIPSet, nftables.K8sSvcPrefix+svcID)
+					nftables.AddToSet(p.nfti, tableFamily, servicePort.Protocol, addr, uint16(servicePort.Port), nftables.K8sMarkMasqSet, nftables.K8sNATDoMarkMasq)
+				}
 			}
 		}
-		if storedSvc.Spec.LoadBalancerIP != "" {
-			klog.V(5).Infof("removing old LoadBalancerIP: %s", storedSvc.Spec.LoadBalancerIP)
-			addr := storedSvc.Spec.LoadBalancerIP
-			tableFamily := utilnftables.TableFamilyIPv4
-			if utilnet.IsIPv6String(addr) {
-				tableFamily = utilnftables.TableFamilyIPv6
-			}
-			for _, servicePort := range svcNew.Spec.Ports {
-				svcPortName := getSvcPortName(svcNew.Name, svcNew.Namespace, servicePort.Name, servicePort.Protocol)
-				svc := p.serviceMap[svcPortName].(*serviceInfo).BaseServiceInfo.String()
-				svcID := servicePortSvcID(svcPortName.String(), string(servicePort.Protocol), svc)
-				nftables.RemoveFromSet(p.nfti, tableFamily, servicePort.Protocol, addr, uint16(servicePort.Port), nftables.K8sLoadbalancerIPSet, nftables.K8sSvcPrefix+svcID)
-				nftables.RemoveFromSet(p.nfti, tableFamily, servicePort.Protocol, addr, uint16(servicePort.Port), nftables.K8sMarkMasqSet, nftables.K8sNATDoMarkMasq)
+		// Check stored Service Loadbalancer status for entries missing in a new Service, if not found
+		// it indicates removal of LoadBalancer IP
+		for _, lbingress := range storedSvc.Status.LoadBalancer.Ingress {
+			// TODO figure out what to do if addr.Host is used
+			if _, found := isAddressInIngress(svcNew.Status.LoadBalancer.Ingress, lbingress.IP); !found {
+				klog.V(5).Infof("removing old LoadBalancerIP: %s", lbingress.IP)
+				addr := lbingress.IP
+				tableFamily := utilnftables.TableFamilyIPv4
+				if utilnet.IsIPv6String(addr) {
+					tableFamily = utilnftables.TableFamilyIPv6
+				}
+				for _, servicePort := range svcNew.Spec.Ports {
+					svcPortName := getSvcPortName(svcNew.Name, svcNew.Namespace, servicePort.Name, servicePort.Protocol)
+					svc := p.serviceMap[svcPortName].(*serviceInfo).BaseServiceInfo.String()
+					svcID := servicePortSvcID(svcPortName.String(), string(servicePort.Protocol), svc)
+					nftables.RemoveFromSet(p.nfti, tableFamily, servicePort.Protocol, addr, uint16(servicePort.Port), nftables.K8sLoadbalancerIPSet, nftables.K8sSvcPrefix+svcID)
+					nftables.RemoveFromSet(p.nfti, tableFamily, servicePort.Protocol, addr, uint16(servicePort.Port), nftables.K8sMarkMasqSet, nftables.K8sNATDoMarkMasq)
+				}
 			}
 		}
 	}
+}
+
+// isAddressInIngress returns bool and index of the address in v1.LoadBalancerIngress slice
+func isAddressInIngress(ingress []v1.LoadBalancerIngress, address string) (int, bool) {
+	for i, addr := range ingress {
+		if strings.Compare(addr.IP, address) == 0 {
+			return i, true
+		}
+	}
+	return 0, false
+}
+
+// isIngressEqua checks equality of two v1.LoadBalancerIngress slices in terms of length and
+// presence of the same IPs in both.
+func isIngressEqual(a []v1.LoadBalancerIngress, b []v1.LoadBalancerIngress) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := 0; i < len(a); i++ {
+		if _, found := isAddressInIngress(b, a[i].IP); !found {
+			return false
+		}
+	}
+	for i := 0; i < len(b); i++ {
+		if _, found := isAddressInIngress(a, b[i].IP); !found {
+			return false
+		}
+	}
+	return true
 }

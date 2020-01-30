@@ -9,58 +9,58 @@ kind: ClusterRole
 metadata:
   name: nfproxy
 rules:
-- apiGroups:
-  - ""
-  resources:
-  - endpoints
-  - services
-  verbs:
-  - list
-  - watch
-- apiGroups:
-  - ""
-  resources:
-  - nodes
-  verbs:
-  - get
-- apiGroups:
-  - ""
-  resources:
-  - events
-  verbs:
-  - create
-  - patch
-  - update
-- apiGroups:
-  - events.k8s.io
-  resources:
-  - events
-  verbs:
-  - create
-- apiGroups:
-  - events.k8s.io
-  resources:
-  - events
-  verbs:
-  - patch
-- apiGroups:
-  - events.k8s.io
-  resources:
-  - events
-  verbs:
-  - update
-- apiGroups:
-  - ""
-  resources:
-  - nodes
-  verbs:
-  - list
-- apiGroups:
-  - ""
-  resources:
-  - nodes
-  verbs:
-  - watch
+  - apiGroups:
+      - ""
+    resources:
+      - endpoints
+      - services
+    verbs:
+      - list
+      - watch
+  - apiGroups:
+      - ""
+    resources:
+      - nodes
+    verbs:
+      - get
+  - apiGroups:
+      - ""
+    resources:
+      - events
+    verbs:
+      - create
+      - patch
+      - update
+  - apiGroups:
+      - events.k8s.io
+    resources:
+      - events
+    verbs:
+      - create
+  - apiGroups:
+      - events.k8s.io
+    resources:
+      - events
+    verbs:
+      - patch
+  - apiGroups:
+      - events.k8s.io
+    resources:
+      - events
+    verbs:
+      - update
+  - apiGroups:
+      - ""
+    resources:
+      - nodes
+    verbs:
+      - list
+  - apiGroups:
+      - ""
+    resources:
+      - nodes
+    verbs:
+      - watch
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
@@ -71,9 +71,9 @@ roleRef:
   kind: ClusterRole
   name: nfproxy
 subjects:
-- kind: ServiceAccount
-  name: nfproxy
-  namespace: kube-system
+  - kind: ServiceAccount
+    name: nfproxy
+    namespace: kube-system
 ---
 apiVersion: apps/v1
 kind: DaemonSet
@@ -101,8 +101,6 @@ spec:
             - "57.112.0.0/12"
             - --ipv6clustercidr
             - ""
-            - --v
-            - "5"
           env:
             - name: NFPROXY_IP
               valueFrom:
