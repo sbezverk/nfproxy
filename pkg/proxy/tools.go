@@ -19,13 +19,74 @@ package proxy
 import (
 	"crypto/sha256"
 	"encoding/base32"
+	"strconv"
 	"strings"
 
 	utilnftables "github.com/google/nftables"
 	v1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/intstr"
 	utilnet "k8s.io/utils/net"
 )
+
+// BootstrapRules programs rules so the controller could reach API server
+// when it runs "in-cluster" mode.
+func BootstrapRules(p Proxy, host, extAddr string, port string) error {
+	// TODO (sbezverk) Consider adding ip address validation
+	pn, err := strconv.Atoi(port)
+	if err != nil {
+		return err
+	}
+	ipFamily, _ := getIPFamily(host)
+	svc := v1.Service{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "kubernetes",
+			Namespace: "default",
+		},
+		Spec: v1.ServiceSpec{
+			IPFamily: &ipFamily,
+			Ports: []v1.ServicePort{
+				{
+					// TODO (sbezverk) What if it is not secured cluster?
+					Name:       "https",
+					Protocol:   v1.ProtocolTCP,
+					Port:       int32(pn),
+					TargetPort: intstr.FromString(port),
+				},
+			},
+			Type:      v1.ServiceTypeClusterIP,
+			ClusterIP: host,
+		},
+	}
+	endpoint := v1.Endpoints{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "kubernetes",
+			Namespace: "default",
+		},
+		Subsets: []v1.EndpointSubset{
+			{
+				Addresses: []v1.EndpointAddress{
+					{
+						IP: extAddr,
+					},
+				},
+				Ports: []v1.EndpointPort{
+					{
+						Name:     "https",
+						Protocol: v1.ProtocolTCP,
+						// TODO (sbezverk) find a way to get this port from environment
+						Port: int32(6443),
+					},
+				},
+			},
+		},
+	}
+	p.AddService(&svc)
+	p.AddEndpoints(&endpoint)
+
+	return nil
+}
 
 // This is the same as servicePortChainName but with the endpoint included.
 func servicePortEndpointChainName(servicePortName string, protocol string, endpoint string) string {

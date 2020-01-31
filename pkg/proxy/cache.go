@@ -66,7 +66,7 @@ func (c *cache) storeSvcInCache(s *v1.Service) {
 	if _, ok := c.svcCache[types.NamespacedName{Name: s.ObjectMeta.Name, Namespace: s.ObjectMeta.Namespace}]; ok {
 		delete(c.svcCache, types.NamespacedName{Name: s.ObjectMeta.Name, Namespace: s.ObjectMeta.Namespace})
 	}
-	c.svcCache[types.NamespacedName{Name: s.ObjectMeta.Name, Namespace: s.ObjectMeta.Namespace}] = s
+	c.svcCache[types.NamespacedName{Name: s.ObjectMeta.Name, Namespace: s.ObjectMeta.Namespace}] = s.DeepCopy()
 }
 
 // removeSvcFromCache removes stored service from cache.
@@ -111,7 +111,7 @@ func (c *cache) storeEpInCache(ep *v1.Endpoints) {
 	if _, ok := c.epCache[types.NamespacedName{Name: ep.ObjectMeta.Name, Namespace: ep.ObjectMeta.Namespace}]; ok {
 		delete(c.epCache, types.NamespacedName{Name: ep.ObjectMeta.Name, Namespace: ep.ObjectMeta.Namespace})
 	}
-	c.epCache[types.NamespacedName{Name: ep.ObjectMeta.Name, Namespace: ep.ObjectMeta.Namespace}] = ep
+	c.epCache[types.NamespacedName{Name: ep.ObjectMeta.Name, Namespace: ep.ObjectMeta.Namespace}] = ep.DeepCopy()
 }
 
 // removeEpFromCache removes stored service from cache.

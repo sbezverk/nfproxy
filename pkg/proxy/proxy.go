@@ -18,7 +18,6 @@ package proxy
 
 import (
 	"fmt"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -26,9 +25,7 @@ import (
 	utilnftables "github.com/google/nftables"
 	"github.com/sbezverk/nfproxy/pkg/nftables"
 	v1 "k8s.io/api/core/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/client-go/tools/record"
 	"k8s.io/klog"
 	utilproxy "k8s.io/kubernetes/pkg/proxy/util"
@@ -178,7 +175,12 @@ func (p *proxy) deleteServicePort(svcPortName ServicePortName, servicePort *v1.S
 		klog.Warningf("Service port name %+v does not exist", svcPortName)
 		return
 	}
-	baseInfo, _ := svcInfo.(*serviceInfo)
+	// Creating new baseinfo based on the current state of the service port
+	baseInfo := newBaseServiceInfo(servicePort, svc)
+	// Storing state of Endpoints in new baseinfo for proper cleanup from no-endpoint set
+	baseInfo.svcnft = svcInfo.(*serviceInfo).BaseServiceInfo.svcnft
+	baseInfo.svcName = svcInfo.(*serviceInfo).BaseServiceInfo.svcName
+	baseInfo.svcNamespace = svcInfo.(*serviceInfo).BaseServiceInfo.svcNamespace
 	_, tableFamily := getIPFamily(baseInfo.ClusterIP().String())
 
 	if !baseInfo.svcnft.WithEndpoints {
@@ -190,7 +192,7 @@ func (p *proxy) deleteServicePort(svcPortName ServicePortName, servicePort *v1.S
 	// Remove svcPortName related chains and rules
 	// Populting cluster, external and loadbalancer sets with Service Port information
 	if err := p.removeServicePortFromSets(baseInfo, tableFamily, baseInfo.svcnft.Chains[tableFamily].ServiceID); err != nil {
-		klog.Errorf("failed to remove service port %s to sets with error: %+v", svcPortName.String(), err)
+		klog.Errorf("failed to remove service port %s from sets with error: %+v", svcPortName.String(), err)
 	}
 	// Remove svcPortName related chains and rules
 	for chain, rules := range baseInfo.svcnft.Chains[tableFamily].Chain {
@@ -496,9 +498,9 @@ func (p *proxy) UpdateEndpoints(epOld, epNew *v1.Endpoints) {
 	}
 	for _, e := range info {
 		if !isPortInSubset(storedEp.Subsets, e.port) {
-			klog.V(5).Infof("updating Endpoint %s/%s port %+v", epNew.Namespace, epNew.Name, e.port)
+			klog.V(5).Infof("updating Endpoint %s/%s port %+v", epNew.Namespace, epNew.Name, *e.port)
 			if err := p.addEndpoint(e.name, e.addr, e.port); err != nil {
-				klog.Errorf("failed to update Endpoint %s/%s port %+v with error: %+v", epNew.Namespace, epNew.Name, e.port, err)
+				klog.Errorf("failed to update Endpoint %s/%s port %+v with error: %+v", epNew.Namespace, epNew.Name, *e.port, err)
 				return
 			}
 		}
@@ -513,72 +515,14 @@ func (p *proxy) UpdateEndpoints(epOld, epNew *v1.Endpoints) {
 			continue
 		}
 		if !isPortInSubset(epNew.Subsets, e.port) {
-			klog.V(5).Infof("removing Endpoint %s/%s port %+v", epNew.Namespace, epNew.Name, e.port)
+			klog.V(5).Infof("removing Endpoint %s/%s port %+v", epNew.Namespace, epNew.Name, *e.port)
 			if err := p.deleteEndpoint(e.name, e.addr, e.port, eps); err != nil {
-				klog.Errorf("failed to remove Endpoint %s/%s port %+v with error: %+v", epNew.Namespace, epNew.Name, e.port, err)
+				klog.Errorf("failed to remove Endpoint %s/%s port %+v with error: %+v", epNew.Namespace, epNew.Name, *e.port, err)
 				continue
 			}
 		}
 	}
 	p.cache.storeEpInCache(epNew)
-}
-
-// BootstrapRules programs rules so the controller could reach API server
-// when it runs "in-cluster" mode.
-func BootstrapRules(p Proxy, host, extAddr string, port string) error {
-	// TODO (sbezverk) Consider adding ip address validation
-	pn, err := strconv.Atoi(port)
-	if err != nil {
-		return err
-	}
-	ipFamily, _ := getIPFamily(host)
-	svc := v1.Service{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "kubernetes",
-			Namespace: "default",
-		},
-		Spec: v1.ServiceSpec{
-			IPFamily: &ipFamily,
-			Ports: []v1.ServicePort{
-				{
-					// TODO (sbezverk) What if it is not secured cluster?
-					Name:       "https",
-					Protocol:   v1.ProtocolTCP,
-					Port:       int32(pn),
-					TargetPort: intstr.FromString(port),
-				},
-			},
-			Type:      v1.ServiceTypeClusterIP,
-			ClusterIP: host,
-		},
-	}
-	endpoint := v1.Endpoints{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "kubernetes",
-			Namespace: "default",
-		},
-		Subsets: []v1.EndpointSubset{
-			{
-				Addresses: []v1.EndpointAddress{
-					{
-						IP: extAddr,
-					},
-				},
-				Ports: []v1.EndpointPort{
-					{
-						Name:     "https",
-						Protocol: v1.ProtocolTCP,
-						// TODO (sbezverk) find a way to get this port from environment
-						Port: int32(6443),
-					},
-				},
-			},
-		},
-	}
-	p.AddService(&svc)
-	p.AddEndpoints(&endpoint)
-
-	return nil
 }
 
 // getServicePortEndpointChains return a slice of strings containing a specific ServicePortName all endpoints chains
@@ -599,12 +543,26 @@ func (p *proxy) getServicePortEndpointChains(svcPortName ServicePortName, tableF
 // processServicePortChanges is called from the service Update handler, it checks for any changes in
 // ServicePorts and re-programs nftables.
 func (p *proxy) processServicePortChanges(svcNew *v1.Service, storedSvc *v1.Service) {
+	// Check for Service's IPFamily to program changes in the right table.
+	tableFamily := utilnftables.TableFamilyIPv4
+	if utilnet.IsIPv6String(svcNew.Spec.ClusterIP) {
+		tableFamily = utilnftables.TableFamilyIPv6
+	}
+	// TODO need to use IPFamily eventually
+	//	if *svcNew.Spec.IPFamily == v1.IPv6Protocol {
+	//		tableFamily = utilnftables.TableFamilyIPv6
+	//	}
 	for i := range svcNew.Spec.Ports {
 		servicePort := &svcNew.Spec.Ports[i]
 		svcPortName := getSvcPortName(svcNew.Name, svcNew.Namespace, servicePort.Name, servicePort.Protocol)
 		baseSvcInfo := newBaseServiceInfo(servicePort, svcNew)
 		id, found := isServicePortInPorts(storedSvc.Spec.Ports, servicePort)
-		if !found {
+		// if new servicePort is not found in the stored last known service and svcPortName does not already exist in ServiceMap
+		// then it is genuine new port, so addig it and then move to next
+		p.mu.Lock()
+		_, ok := p.serviceMap[svcPortName]
+		p.mu.Unlock()
+		if !found && !ok {
 			// Adding new service port
 			p.addServicePort(svcPortName, servicePort, svcNew, baseSvcInfo)
 			continue
@@ -627,12 +585,31 @@ func (p *proxy) processServicePortChanges(svcNew *v1.Service, storedSvc *v1.Serv
 		// then remove the old ones
 		if storedSvc.Spec.Ports[id].Protocol != servicePort.Protocol ||
 			storedSvc.Spec.Ports[id].Port != servicePort.Port {
-			// Add updated ServicePort
-			p.addServicePort(svcPortName, servicePort, svcNew, baseSvcInfo)
 			// Deleting old ServicePort
 			p.deleteServicePort(oldServicePortName, &storedSvc.Spec.Ports[id], storedSvc)
+			// Add updated ServicePort
+			p.addServicePort(svcPortName, servicePort, svcNew, baseSvcInfo)
 			klog.V(5).Infof("Service Port name has been updated old: %+v new: %+v", oldServicePortName, svcPortName)
-			continue
+		}
+		// Check if there is a change in NodePort, if there is, then update NodePort set with new value.
+		if storedSvc.Spec.Ports[id].NodePort != svcNew.Spec.Ports[i].NodePort {
+			svc := p.serviceMap[svcPortName].(*serviceInfo).BaseServiceInfo.String()
+			svcID := servicePortSvcID(svcPortName.String(), string(servicePort.Protocol), svc)
+			// Adding new NodePort if it is not 0, NodePort of 0 in svcNew.Spec.Ports[i].NodePort indicates the removal of NodePort
+			// from Service Port completely, in this case operation of addition is skipped.
+			if svcNew.Spec.Ports[i].NodePort != 0 {
+				if err := nftables.AddToNodeportSet(p.nfti, tableFamily, servicePort.Protocol, uint16(svcNew.Spec.Ports[i].NodePort), nftables.K8sSvcPrefix+svcID); err != nil {
+					klog.Errorf("update/add of NodePort %d for Service Port name: %+v failed with error %w", svcNew.Spec.Ports[i].NodePort, svcPortName, err)
+				}
+			}
+			// Removing old NodePort if it is not 0, NodePort of 0 in storedSvc.Spec.Ports[i].NodePort indicates the addition of NodePort
+			// to the Service Port which did not have NodePort before, in this case operation of removal is skipped.
+			if storedSvc.Spec.Ports[i].NodePort != 0 {
+				if err := nftables.RemoveFromNodeportSet(p.nfti, tableFamily, servicePort.Protocol, uint16(storedSvc.Spec.Ports[id].NodePort), nftables.K8sSvcPrefix+svcID); err != nil {
+					klog.Errorf("update/remove of NodePort %d for Service Port name: %+v failed with error %w", storedSvc.Spec.Ports[id].NodePort, svcPortName, err)
+				}
+			}
+			klog.V(5).Infof("NodePort changed from %d to %d for Service Port name: %+v", storedSvc.Spec.Ports[id].NodePort, svcNew.Spec.Ports[i].NodePort, svcPortName)
 		}
 	}
 	// Processing deleted or undiscoverably changed ServicePorts, if ServicePort exists in storedSvc.Spec.Ports but
