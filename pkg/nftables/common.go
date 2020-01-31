@@ -526,7 +526,7 @@ func setupStaticFilterRules(ci nftableslib.ChainsInterface, clusterCIDR string) 
 		return err
 	}
 
-	rejectAction, _ := nftableslib.SetReject(unix.NFT_REJECT_ICMP_UNREACH, unix.NFT_REJECT_ICMPX_PORT_UNREACH)
+	rejectAction, _ := nftableslib.SetReject(unix.NFT_REJECT_ICMP_UNREACH, unix.NFT_REJECT_ICMPX_ADMIN_PROHIBITED)
 	k8sRejectRules := []nftableslib.Rule{
 		{
 			Action: rejectAction,

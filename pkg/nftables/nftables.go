@@ -409,10 +409,10 @@ func RemoveFromNodeportSet(nfti *NFTInterface, tableFamily nftables.TableFamily,
 			return err
 		}
 		if errors.Is(err, unix.ENOENT) {
-			klog.Warningf("RemoveFromNodeportSet for %s:%s:%d does not exist", proto, port)
+			klog.Warningf("RemoveFromNodeportSet for %s:%d does not exist", proto, port)
 			return nil
 		}
-		klog.Errorf("RemoveFromNodeportSet for port: %dfailed with error: %v", port, err)
+		klog.Errorf("RemoveFromNodeportSet for port: %d failed with error: %v", port, err)
 		return err
 	}
 
