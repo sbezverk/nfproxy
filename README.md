@@ -87,6 +87,50 @@ If nfproxy started successfully, pod's log will contain messages about discovere
 kubectl delete -f ./deployment/nfproxy.yaml
 ```
 
+## Status
+
+Each nfproxy's PR is tested against kubernetes sig-network's e2e testing framework. 
+The command line to run tests is the following:
+```
+ ./bazel-bin/test/e2e/e2e.test  -ginkgo.focus="\[sig-network\].*Service" -kubeconfig={location of kubeconfig file} -dns-domain={cluster's domain name}
+```
+The current status is the following:
+
+```
+[Fail] [sig-network] Services [It] should be rejected when no endpoints exist 
+test/e2e/network/service.go:2600
+
+[Fail] [sig-network] Services [It] should be able to update service type to NodePort listening on same port number but different protocols 
+test/e2e/network/service.go:1563
+
+[Fail] [sig-network] Services [It] should be able to switch session affinity for service with type clusterIP [LinuxOnly] [Flaky] 
+test/e2e/network/service.go:193
+
+[Fail] [sig-network] Services [It] should allow pods to hairpin back to themselves through services 
+test/e2e/network/service.go:968
+
+[Fail] [sig-network] EndpointSlice [Feature:EndpointSlice] version v1 [It] should create Endpoints and EndpointSlices for Pods matching a Service 
+test/e2e/network/endpointslice.go:358
+
+[Fail] [sig-network] Services [It] should be able to switch session affinity for LoadBalancer service with ESIPP off [Slow] [DisabledForLargeClusters] [LinuxOnly] 
+test/e2e/network/util.go:40
+
+[Fail] [sig-network] Services [It] should be able to switch session affinity for NodePort service [LinuxOnly] [Flaky] 
+test/e2e/network/service.go:193
+
+[Fail] [sig-network] Services [It] should be able to switch session affinity for LoadBalancer service with ESIPP on [Slow] [DisabledForLargeClusters] [LinuxOnly] 
+test/e2e/network/service.go:193
+
+[Fail] [sig-network] Services [It] should handle load balancer cleanup finalizer for service [Slow] 
+test/e2e/framework/service/wait.go:78
+
+Ran 27 of 4846 Specs in 5546.044 seconds
+FAIL! -- 18 Passed | 9 Failed | 0 Pending | 4819 Skipped
+--- FAIL: TestE2E (5546.06s)
+```
+
+The effort is underway to make nfproxy to pass all e2e tests. Help is welcome and much appreciated.
+
 Please file an issue for any discovered error or broken functionality.
 
 **NOTE:** It is WIP, please expect rather high volume of changes.
