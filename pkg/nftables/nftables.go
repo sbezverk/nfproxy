@@ -462,6 +462,12 @@ func ProgramServiceEndpoints(nfti *NFTInterface, tableFamily nftables.TableFamil
 	}
 	if len(ruleID) == 0 {
 		// Since ruleID len is 0, it is the first time when the service has endpoints' rule programmed
+		_, err = ri.Rules().CreateImm(&nftableslib.Rule{
+			Counter: &nftableslib.Counter{},
+		})
+		if err != nil {
+			return nil, fmt.Errorf("fail to program endpoints rules for service chain %s with error: %+v", chain, err)
+		}
 		id, err = ri.Rules().CreateImm(&rule)
 		if err != nil {
 			return nil, fmt.Errorf("fail to program endpoints rules for service chain %s with error: %+v", chain, err)

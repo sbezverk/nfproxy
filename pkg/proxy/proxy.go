@@ -81,6 +81,10 @@ func (p *proxy) AddService(svc *v1.Service) {
 		return
 	}
 	klog.V(6).Infof("AddService for a service Spec: %+v Status: %+v", svc.Spec, svc.Status)
+	if svc.Spec.SessionAffinity == v1.ServiceAffinityClientIP {
+		stickySeconds := int(*svc.Spec.SessionAffinityConfig.ClientIP.TimeoutSeconds)
+		klog.V(5).Infof("Service %s/%s has SessionAffinity set for %d seconds", svc.Namespace, svc.Name, stickySeconds)
+	}
 	svcName := types.NamespacedName{Namespace: svc.Namespace, Name: svc.Name}
 	if utilproxy.ShouldSkipService(svcName, svc) {
 		return
@@ -94,6 +98,7 @@ func (p *proxy) AddService(svc *v1.Service) {
 }
 
 func (p *proxy) addServicePort(svcPortName ServicePortName, servicePort *v1.ServicePort, svc *v1.Service, baseSvcInfo *BaseServiceInfo) {
+	klog.V(5).Infof("add Service Port Name: %+v", svcPortName)
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
@@ -112,14 +117,16 @@ func (p *proxy) addServicePort(svcPortName ServicePortName, servicePort *v1.Serv
 	// Check if new ServicePort already has or not corresponding endpoints entries, if not then
 	// ServicePort is added to No Endpoint set.
 	if len(p.endpointsMap[svcPortName]) == 0 {
+		klog.V(5).Infof("Service Port Name: %+v has no endpoints", svcPortName)
 		if err := p.addToNoEndpointsList(baseSvcInfo, tableFamily); err != nil {
 			klog.Errorf("failed to add %s to No Endpoints Set with error: %+v", svcPortName.String(), err)
 		}
 		baseSvcInfo.svcnft.WithEndpoints = false
 	} else {
+		klog.V(5).Infof("Service Port Name: %+v has %d endpoints", svcPortName, len(p.endpointsMap[svcPortName]))
 		baseSvcInfo.svcnft.WithEndpoints = true
 	}
-	// Creating a set of chains (k8s-nfproxy-svc-{svcID},k8s-nfproxy-fw-{svcID}, k8s-nfproxy-xlb-{svcID}) for a service port
+	// Creating a set of chains (k8s-nfproxy-svc-{svcID}, k8s-nfproxy-fw-{svcID}, k8s-nfproxy-xlb-{svcID}) for a service port
 	if err := nftables.AddServiceChains(p.nfti, tableFamily, svcID); err != nil {
 		klog.Errorf("failed to add service port %s chains with error: %+v", svcPortName.String(), err)
 		return
@@ -250,7 +257,7 @@ func (p *proxy) AddEndpoints(ep *v1.Endpoints) {
 	s := time.Now()
 	defer klog.V(5).Infof("AddEndpoints ran for: %d nanoseconds", time.Since(s))
 	p.cache.storeEpInCache(ep)
-	klog.V(6).Infof("Add endpoint: %s/%s", ep.Namespace, ep.Name)
+	klog.V(5).Infof("Add endpoint: %s/%s", ep.Namespace, ep.Name)
 	//	p.UpdateEndpoints(&v1.Endpoints{Subsets: []v1.EndpointSubset{}}, ep)
 	info, err := processEpSubsets(ep)
 	if err != nil {
@@ -258,7 +265,7 @@ func (p *proxy) AddEndpoints(ep *v1.Endpoints) {
 		return
 	}
 	for _, e := range info {
-		klog.V(5).Infof("adding Endpoint %s/%s port %+v", ep.Namespace, ep.Name, *e.port)
+		klog.V(5).Infof("adding Endpoint %s/%s Service Port Name: %+v", ep.Namespace, ep.Name, e.name)
 		if err := p.addEndpoint(e.name, e.addr, e.port); err != nil {
 			klog.Errorf("failed to add Endpoint %s/%s port %+v with error: %+v", ep.Namespace, ep.Name, e.port, err)
 			return
@@ -287,6 +294,7 @@ func (p *proxy) addEndpoint(svcPortName ServicePortName, addr *v1.EndpointAddres
 	}
 	baseEndpointInfo.epnft.Rule[ipTableFamily] = &epRule
 	if err := p.addEndpointRule(&epRule, ipTableFamily, cn, svcPortName, &epKey{port.Protocol, addr.IP, port.Port}); err != nil {
+		klog.Errorf("failed to add endpoint rules for Service Port Name: %+v with error: %+v", svcPortName, err)
 		return err
 	}
 	p.endpointsMap[svcPortName] = append(p.endpointsMap[svcPortName], newEndpointInfo(baseEndpointInfo, port.Protocol))
@@ -409,6 +417,7 @@ func (p *proxy) deleteEndpoint(svcPortName ServicePortName, addr *v1.EndpointAdd
 				return err
 			}
 			if err := p.deleteEndpointRules(ipTableFamily, cn, ruleID, svcPortName, &epKey{port.Protocol, addr.IP, port.Port}); err != nil {
+				klog.Errorf("failed to delete endpoint rules service port name %+v with error: %+v", svcPortName, err)
 				return err
 			}
 		}
@@ -452,8 +461,17 @@ func processEpSubsets(ep *v1.Endpoints) ([]epInfo, error) {
 				return nil, fmt.Errorf("found invalid endpoint port %s", port.Name)
 			}
 			svcPortName := getSvcPortName(ep.Name, ep.Namespace, port.Name, port.Protocol)
+			if len(ss.Addresses) == 0 {
+			}
 			for i := range ss.Addresses {
 				addr := &ss.Addresses[i]
+				if addr.IP == "" {
+					return nil, fmt.Errorf("found invalid endpoint port %s with empty host", port.Name)
+				}
+				ports = append(ports, epInfo{name: svcPortName, addr: addr, port: port})
+			}
+			for i := range ss.NotReadyAddresses {
+				addr := &ss.NotReadyAddresses[i]
 				if addr.IP == "" {
 					return nil, fmt.Errorf("found invalid endpoint port %s with empty host", port.Name)
 				}
@@ -473,7 +491,7 @@ func (p *proxy) UpdateEndpoints(epOld, epNew *v1.Endpoints) {
 		// ignoring it
 		return
 	}
-	klog.V(6).Infof("UpdateEndpoint for endpoint: %s/%s", epNew.Namespace, epNew.Name)
+	klog.V(5).Infof("UpdateEndpoint for endpoint: %s/%s", epNew.Namespace, epNew.Name)
 	// Check if the version of Last Known Endpoint's version matches with epOld version
 	// mismatch would indicate lost update.
 	var storedEp *v1.Endpoints
@@ -498,7 +516,7 @@ func (p *proxy) UpdateEndpoints(epOld, epNew *v1.Endpoints) {
 	}
 	for _, e := range info {
 		if !isPortInSubset(storedEp.Subsets, e.port) {
-			klog.V(5).Infof("updating Endpoint %s/%s port %+v", epNew.Namespace, epNew.Name, *e.port)
+			klog.V(5).Infof("updating Endpoint %s/%s Service Port name: %+v", epNew.Namespace, epNew.Name, e.name)
 			if err := p.addEndpoint(e.name, e.addr, e.port); err != nil {
 				klog.Errorf("failed to update Endpoint %s/%s port %+v with error: %+v", epNew.Namespace, epNew.Name, *e.port, err)
 				return
