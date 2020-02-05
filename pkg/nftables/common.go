@@ -34,15 +34,16 @@ const (
 	K8sFilterForward  = "k8s-filter-forward"
 	K8sFilterDoReject = "k8s-filter-do-reject"
 
-	NatPrerouting     = "nat-preroutin"
-	NatOutput         = "nat-output"
-	NatPostrouting    = "nat-postrouting"
-	K8sNATMarkDrop    = "k8s-nat-mark-drop"
-	K8sNATDoMarkMasq  = "k8s-nat-do-mark-masq"
-	K8sNATMarkMasq    = "k8s-nat-mark-masq"
-	K8sNATServices    = "k8s-nat-services"
-	K8sNATNodeports   = "k8s-nat-nodeports"
-	K8sNATPostrouting = "k8s-nat-postrouting"
+	NatPrerouting      = "nat-preroutin"
+	NatOutput          = "nat-output"
+	NatPostrouting     = "nat-postrouting"
+	K8sNATMarkDrop     = "k8s-nat-mark-drop"
+	K8sNATDoMarkMasq   = "k8s-nat-do-mark-masq"
+	K8sNATMarkMasq     = "k8s-nat-mark-masq"
+	K8sNATDoMasquerade = "k8s-nat-do-masquerade"
+	K8sNATServices     = "k8s-nat-services"
+	K8sNATNodeports    = "k8s-nat-nodeports"
+	K8sNATPostrouting  = "k8s-nat-postrouting"
 
 	K8sNoEndpointsSet    = "no-endpoints"
 	K8sNodeportSet       = "nodeports"
@@ -163,6 +164,10 @@ func setupNFProxyChains(ci nftableslib.ChainsInterface) error {
 			attrs: nil,
 		},
 		{
+			name:  K8sNATDoMasquerade,
+			attrs: nil,
+		},
+		{
 			name:  K8sNATServices,
 			attrs: nil,
 		},
@@ -187,6 +192,9 @@ func setupNFProxyChains(ci nftableslib.ChainsInterface) error {
 func setupStaticNATRules(sets map[string]*nftables.Set, ci nftableslib.ChainsInterface, cidr string, ipv6 bool) error {
 	preroutingRules := []nftableslib.Rule{
 		{
+			Counter: &nftableslib.Counter{},
+		},
+		{
 			// -A PREROUTING -m comment --comment "kubernetes service portals" -j KUBE-SERVICES
 			Action: setActionVerdict(unix.NFT_JUMP, K8sNATServices),
 		},
@@ -196,6 +204,9 @@ func setupStaticNATRules(sets map[string]*nftables.Set, ci nftableslib.ChainsInt
 	}
 
 	outputRules := []nftableslib.Rule{
+		{
+			Counter: &nftableslib.Counter{},
+		},
 		{
 			// -A OUTPUT -m comment --comment "kubernetes service portals" -j KUBE-SERVICES
 			Action: setActionVerdict(unix.NFT_JUMP, K8sNATServices),
@@ -207,6 +218,9 @@ func setupStaticNATRules(sets map[string]*nftables.Set, ci nftableslib.ChainsInt
 
 	postroutingRules := []nftableslib.Rule{
 		{
+			Counter: &nftableslib.Counter{},
+		},
+		{
 			// -A POSTROUTING -m comment --comment "kubernetes postrouting rules" -j KUBE-POSTROUTING
 			Action: setActionVerdict(unix.NFT_JUMP, K8sNATPostrouting),
 		},
@@ -216,6 +230,9 @@ func setupStaticNATRules(sets map[string]*nftables.Set, ci nftableslib.ChainsInt
 	}
 
 	markDropRules := []nftableslib.Rule{
+		{
+			Counter: &nftableslib.Counter{},
+		},
 		{
 			// -A KUBE-MARK-DROP -j MARK --set-xmark 0x8000/0x8000
 			Meta: &nftableslib.Meta{
@@ -230,17 +247,30 @@ func setupStaticNATRules(sets map[string]*nftables.Set, ci nftableslib.ChainsInt
 		return err
 	}
 
-	masqAction, _ := nftableslib.SetMasq(true, false, true)
+	masqAction, _ := nftableslib.SetMasq(false, false, false)
+	k8sDoMasqRules := []nftableslib.Rule{
+		{
+			Counter: &nftableslib.Counter{},
+		},
+		{
+			// Log for debugging purposes
+			//			Log: &nftableslib.Log{
+			//				Key:   unix.NFTA_LOG_LEVEL,
+			//				Value: []byte{0x0, 0x0, 0x0, 0x7},
+			//			},
+			Action: masqAction,
+		},
+	}
+	if _, err := programChainRules(ci, K8sNATDoMasquerade, k8sDoMasqRules, 0); err != nil {
+		return err
+	}
+
 	k8sPostroutingRules := []nftableslib.Rule{
 		{
-			// -A KUBE-POSTROUTING -m comment --comment "kubernetes service traffic requiring SNAT" -m mark --mark 0x4000/0x4000 -j MASQUERADE
-			Meta: &nftableslib.Meta{
-				Mark: &nftableslib.MetaMark{
-					Set:   false,
-					Value: 0x4000,
-				},
-			},
-			Action: masqAction,
+			Counter: &nftableslib.Counter{},
+		},
+		{
+			Action: setActionVerdict(unix.NFT_JUMP, K8sNATDoMasquerade),
 		},
 	}
 	if _, err := programChainRules(ci, K8sNATPostrouting, k8sPostroutingRules, 0); err != nil {
@@ -274,6 +304,9 @@ func setupStaticNATRules(sets map[string]*nftables.Set, ci nftableslib.ChainsInt
 	}
 
 	staticServiceRules := []nftableslib.Rule{
+		{
+			Counter: &nftableslib.Counter{},
+		},
 		// TODO This rule should be added only if masquarade-all flag is set
 		{
 			L3: &nftableslib.L3Rule{
@@ -334,6 +367,9 @@ func setupStaticNATRules(sets map[string]*nftables.Set, ci nftableslib.ChainsInt
 
 	staticNodeportRules := []nftableslib.Rule{
 		{
+			Counter: &nftableslib.Counter{},
+		},
+		{
 			Concat: &nftableslib.Concat{
 				VMap: true,
 				SetRef: &nftableslib.SetRef{
@@ -352,6 +388,9 @@ func setupStaticNATRules(sets map[string]*nftables.Set, ci nftableslib.ChainsInt
 	// Marking for Masq rule, it will mark the packet and then return to the calling chain
 	doMarkMasqRules := []nftableslib.Rule{
 		{
+			Counter: &nftableslib.Counter{},
+		},
+		{
 			Meta: &nftableslib.Meta{
 				Mark: &nftableslib.MetaMark{
 					Set:   true,
@@ -366,6 +405,9 @@ func setupStaticNATRules(sets map[string]*nftables.Set, ci nftableslib.ChainsInt
 	}
 
 	masqRules := []nftableslib.Rule{
+		{
+			Counter: &nftableslib.Counter{},
+		},
 		{
 			Concat: &nftableslib.Concat{
 				VMap: true,
@@ -391,6 +433,9 @@ func setupStaticNATRules(sets map[string]*nftables.Set, ci nftableslib.ChainsInt
 func setupStaticFilterRules(ci nftableslib.ChainsInterface, clusterCIDR string) error {
 	inputRules := []nftableslib.Rule{
 		{
+			Counter: &nftableslib.Counter{},
+		},
+		{
 			// -A INPUT -m conntrack --ctstate NEW -m comment --comment "kubernetes service portals" -j KUBE-SERVICES
 			Conntracks: []*nftableslib.Conntrack{
 				{
@@ -411,6 +456,9 @@ func setupStaticFilterRules(ci nftableslib.ChainsInterface, clusterCIDR string) 
 	}
 
 	forwardRules := []nftableslib.Rule{
+		{
+			Counter: &nftableslib.Counter{},
+		},
 		{
 			// -A FORWARD -m comment --comment "kubernetes forwarding rules" -j KUBE-FORWARD
 			Action: setActionVerdict(unix.NFT_JUMP, K8sFilterForward),
@@ -433,6 +481,9 @@ func setupStaticFilterRules(ci nftableslib.ChainsInterface, clusterCIDR string) 
 
 	outputRules := []nftableslib.Rule{
 		{
+			Counter: &nftableslib.Counter{},
+		},
+		{
 			// -A OUTPUT -m conntrack --ctstate NEW -m comment --comment "kubernetes service portals" -j KUBE-SERVICES
 			Conntracks: []*nftableslib.Conntrack{
 				{
@@ -454,6 +505,9 @@ func setupStaticFilterRules(ci nftableslib.ChainsInterface, clusterCIDR string) 
 
 	firewallRules := []nftableslib.Rule{
 		{
+			Counter: &nftableslib.Counter{},
+		},
+		{
 			// -A KUBE-FIREWALL -m comment --comment "kubernetes firewall for dropping marked packets" -m mark --mark 0x8000/0x8000 -j DROP
 			Meta: &nftableslib.Meta{
 				Mark: &nftableslib.MetaMark{
@@ -470,6 +524,9 @@ func setupStaticFilterRules(ci nftableslib.ChainsInterface, clusterCIDR string) 
 	}
 
 	k8sForwardRules := []nftableslib.Rule{
+		{
+			Counter: &nftableslib.Counter{},
+		},
 		{
 			// -A KUBE-FORWARD -m conntrack --ctstate INVALID -j DROP
 			Conntracks: []*nftableslib.Conntrack{
@@ -529,6 +586,9 @@ func setupStaticFilterRules(ci nftableslib.ChainsInterface, clusterCIDR string) 
 	rejectAction, _ := nftableslib.SetReject(unix.NFT_REJECT_ICMP_UNREACH, unix.NFT_REJECT_ICMPX_ADMIN_PROHIBITED)
 	k8sRejectRules := []nftableslib.Rule{
 		{
+			Counter: &nftableslib.Counter{},
+		},
+		{
 			Action: rejectAction,
 		},
 	}
@@ -558,6 +618,9 @@ func setupK8sFilterRules(sets map[string]*nftables.Set, ci nftableslib.ChainsInt
 		},
 	}
 	servicesRules := []nftableslib.Rule{
+		{
+			Counter: &nftableslib.Counter{},
+		},
 		{
 			Concat: &nftableslib.Concat{
 				VMap: true,

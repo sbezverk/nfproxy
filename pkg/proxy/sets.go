@@ -21,8 +21,8 @@ import (
 	"github.com/sbezverk/nfproxy/pkg/nftables"
 )
 
-// addServicePortToSets adds Service Port's Proto.Daddr.Port to cluster ip set, external ip set and
-// loadbalance ip set.
+// addServicePortToSets adds Service Port's Proto.Daddr.Port to cluster ip set, external ip set,
+// loadbalance ip set and node port set.
 func (p *proxy) addServicePortToSets(servicePort ServicePort, tableFamily utilnftables.TableFamily, svcID string) error {
 	proto := servicePort.Protocol()
 	port := uint16(servicePort.Port())
@@ -65,12 +65,19 @@ func (p *proxy) addServicePortToSets(servicePort ServicePort, tableFamily utilnf
 	return nil
 }
 
-// addServicePortToSets adds Service Port's Proto.Daddr.Port to cluster ip set, external ip set and
-// loadbalance ip set.
+// removeServicePortFromSets from Service Port's Proto.Daddr.Port from cluster ip set, external ip set,
+// loadbalance ip set and nodeport set.
 func (p *proxy) removeServicePortFromSets(servicePort ServicePort, tableFamily utilnftables.TableFamily, svcID string) error {
+	// To get the most current information about a Service Port, getting the last known Service Entry
+	svcName := servicePort.(*BaseServiceInfo).svcName
+	svcNamespace := servicePort.(*BaseServiceInfo).svcNamespace
+	storedSvc, err := p.cache.getLastKnownSvcFromCache(svcName, svcNamespace)
+	if err != nil {
+		return err
+	}
 	proto := servicePort.Protocol()
 	port := uint16(servicePort.Port())
-	clusterIP := servicePort.ClusterIP().String()
+	clusterIP := storedSvc.Spec.ClusterIP
 	// cluster IP needs to be added to 2 sets, to K8sClusterIPSet and if masquarade-all is true
 	// then it needs to be added to K8sMarkMasqSet
 	if err := nftables.RemoveFromSet(p.nfti, tableFamily, proto, clusterIP, port, nftables.K8sClusterIPSet, nftables.K8sSvcPrefix+svcID); err != nil {
@@ -80,7 +87,7 @@ func (p *proxy) removeServicePortFromSets(servicePort ServicePort, tableFamily u
 		return err
 	}
 
-	if extIPs := servicePort.ExternalIPStrings(); len(extIPs) != 0 {
+	if extIPs := storedSvc.Spec.ExternalIPs; len(extIPs) != 0 {
 		for _, extIP := range extIPs {
 			if err := nftables.RemoveFromSet(p.nfti, tableFamily, proto, extIP, port, nftables.K8sExternalIPSet, nftables.K8sSvcPrefix+svcID); err != nil {
 				return err
@@ -91,16 +98,12 @@ func (p *proxy) removeServicePortFromSets(servicePort ServicePort, tableFamily u
 		}
 	}
 	// Loadbalancer IP is taken from the last known services object stored in cache
-	svcName := servicePort.(*serviceInfo).BaseServiceInfo.svcName
-	svcNamespace := servicePort.(*serviceInfo).BaseServiceInfo.svcNamespace
-	if storedSvc, err := p.cache.getLastKnownSvcFromCache(svcName, svcNamespace); err == nil {
-		for _, lbIP := range storedSvc.Status.LoadBalancer.Ingress {
-			if err := nftables.RemoveFromSet(p.nfti, tableFamily, proto, lbIP.IP, port, nftables.K8sLoadbalancerIPSet, nftables.K8sSvcPrefix+svcID); err != nil {
-				return err
-			}
-			if err := nftables.RemoveFromSet(p.nfti, tableFamily, proto, lbIP.IP, port, nftables.K8sMarkMasqSet, nftables.K8sNATDoMarkMasq); err != nil {
-				return err
-			}
+	for _, lbIP := range storedSvc.Status.LoadBalancer.Ingress {
+		if err := nftables.RemoveFromSet(p.nfti, tableFamily, proto, lbIP.IP, port, nftables.K8sLoadbalancerIPSet, nftables.K8sSvcPrefix+svcID); err != nil {
+			return err
+		}
+		if err := nftables.RemoveFromSet(p.nfti, tableFamily, proto, lbIP.IP, port, nftables.K8sMarkMasqSet, nftables.K8sNATDoMarkMasq); err != nil {
+			return err
 		}
 	}
 
