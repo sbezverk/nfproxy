@@ -34,15 +34,16 @@ const (
 	K8sFilterForward  = "k8s-filter-forward"
 	K8sFilterDoReject = "k8s-filter-do-reject"
 
-	NatPrerouting     = "nat-preroutin"
-	NatOutput         = "nat-output"
-	NatPostrouting    = "nat-postrouting"
-	K8sNATMarkDrop    = "k8s-nat-mark-drop"
-	K8sNATDoMarkMasq  = "k8s-nat-do-mark-masq"
-	K8sNATMarkMasq    = "k8s-nat-mark-masq"
-	K8sNATServices    = "k8s-nat-services"
-	K8sNATNodeports   = "k8s-nat-nodeports"
-	K8sNATPostrouting = "k8s-nat-postrouting"
+	NatPrerouting      = "nat-preroutin"
+	NatOutput          = "nat-output"
+	NatPostrouting     = "nat-postrouting"
+	K8sNATMarkDrop     = "k8s-nat-mark-drop"
+	K8sNATDoMarkMasq   = "k8s-nat-do-mark-masq"
+	K8sNATMarkMasq     = "k8s-nat-mark-masq"
+	K8sNATDoMasquerade = "k8s-nat-do-masquerade"
+	K8sNATServices     = "k8s-nat-services"
+	K8sNATNodeports    = "k8s-nat-nodeports"
+	K8sNATPostrouting  = "k8s-nat-postrouting"
 
 	K8sNoEndpointsSet    = "no-endpoints"
 	K8sNodeportSet       = "nodeports"
@@ -163,6 +164,10 @@ func setupNFProxyChains(ci nftableslib.ChainsInterface) error {
 			attrs: nil,
 		},
 		{
+			name:  K8sNATDoMasquerade,
+			attrs: nil,
+		},
+		{
 			name:  K8sNATServices,
 			attrs: nil,
 		},
@@ -243,19 +248,29 @@ func setupStaticNATRules(sets map[string]*nftables.Set, ci nftableslib.ChainsInt
 	}
 
 	masqAction, _ := nftableslib.SetMasq(false, false, false)
+	k8sDoMasqRules := []nftableslib.Rule{
+		{
+			Counter: &nftableslib.Counter{},
+		},
+		{
+			// Log for debugging purposes
+			//			Log: &nftableslib.Log{
+			//				Key:   unix.NFTA_LOG_LEVEL,
+			//				Value: []byte{0x0, 0x0, 0x0, 0x7},
+			//			},
+			Action: masqAction,
+		},
+	}
+	if _, err := programChainRules(ci, K8sNATDoMasquerade, k8sDoMasqRules, 0); err != nil {
+		return err
+	}
+
 	k8sPostroutingRules := []nftableslib.Rule{
 		{
 			Counter: &nftableslib.Counter{},
 		},
 		{
-			// -A KUBE-POSTROUTING -m comment --comment "kubernetes service traffic requiring SNAT" -m mark --mark 0x4000/0x4000 -j MASQUERADE
-			Meta: &nftableslib.Meta{
-				Mark: &nftableslib.MetaMark{
-					Set:   false,
-					Value: 0x4000,
-				},
-			},
-			Action: masqAction,
+			Action: setActionVerdict(unix.NFT_JUMP, K8sNATDoMasquerade),
 		},
 	}
 	if _, err := programChainRules(ci, K8sNATPostrouting, k8sPostroutingRules, 0); err != nil {
