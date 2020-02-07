@@ -143,21 +143,6 @@ func (p *proxy) addServicePort(svcPortName ServicePortName, servicePort *v1.Serv
 	}
 }
 
-// rekeyServicePort gets ServicePort info stored for the oldSvcPortName and stores it back
-// with the new key.
-func (p *proxy) rekeyServicePort(oldSvcPortName, newSvcPortName ServicePortName) error {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-
-	d, ok := p.serviceMap[oldSvcPortName]
-	if !ok {
-		return fmt.Errorf("service port name %+v does not exist", oldSvcPortName)
-	}
-	p.serviceMap[newSvcPortName] = d
-	delete(p.serviceMap, oldSvcPortName)
-	return nil
-}
-
 func (p *proxy) DeleteService(svc *v1.Service) {
 	s := time.Now()
 	defer klog.V(5).Infof("DeleteService ran for: %d nanoseconds", time.Since(s))
@@ -583,6 +568,7 @@ func (p *proxy) processServicePortChanges(svcNew *v1.Service, storedSvc *v1.Serv
 		if !found && !ok {
 			// Adding new service port
 			p.addServicePort(svcPortName, servicePort, svcNew, baseSvcInfo)
+			klog.V(6).Infof("Service Port Name %s had not been found, it has been added.", svcPortName)
 			continue
 		}
 		// If ServicePortName does not match, it means Protocol/Port pair has not been changed,
@@ -591,12 +577,11 @@ func (p *proxy) processServicePortChanges(svcNew *v1.Service, storedSvc *v1.Serv
 		// needs to be replaced.
 		oldServicePortName := getSvcPortName(storedSvc.Name, storedSvc.Namespace, storedSvc.Spec.Ports[id].Name, storedSvc.Spec.Ports[id].Protocol)
 		if storedSvc.Spec.Ports[id].Name != servicePort.Name {
-			// In case of a Port.Name change no reprogramming is required. All is required, copy old ServicePort's data and store it in
-			// the map with new svcPortName key.
-			if err := p.rekeyServicePort(oldServicePortName, svcPortName); err != nil {
-				klog.Warningf("update of ServicePortName failed with error %w", err)
-			}
-			klog.V(5).Infof("Rekeyed old Service port %+v with new %+v", oldServicePortName, svcPortName)
+			// ServicePortName change is a major change as ServicePortName is used to generate chain names
+			// it is safer to remove it and add a new one after.
+			p.deleteServicePort(oldServicePortName, &storedSvc.Spec.Ports[id], storedSvc)
+			p.addServicePort(svcPortName, servicePort, svcNew, baseSvcInfo)
+			klog.V(6).Infof("Service Port Name was changed from %s to %s and old %s was removed.", oldServicePortName, svcPortName, oldServicePortName)
 			continue
 		}
 		// If Port.Protocol got changed to prevent traffic drop, first add updated to new Protocol:Port rules
@@ -607,7 +592,7 @@ func (p *proxy) processServicePortChanges(svcNew *v1.Service, storedSvc *v1.Serv
 			p.deleteServicePort(oldServicePortName, &storedSvc.Spec.Ports[id], storedSvc)
 			// Add updated ServicePort
 			p.addServicePort(svcPortName, servicePort, svcNew, baseSvcInfo)
-			klog.V(5).Infof("Service Port name has been updated old: %+v new: %+v", oldServicePortName, svcPortName)
+			klog.V(6).Infof("Service Port Name was changed from %s to %s and old %s was removed.", oldServicePortName, svcPortName, oldServicePortName)
 		}
 		// Check if there is a change in NodePort, if there is, then update NodePort set with new value.
 		if storedSvc.Spec.Ports[id].NodePort != svcNew.Spec.Ports[i].NodePort {
