@@ -55,6 +55,8 @@ const (
 	K8sSvcPrefix = "k8s-nfproxy-svc-"
 	K8sFwPrefix  = "k8s-nfproxy-fw-"
 	K8sXlbPrefix = "k8s-nfproxy-xlb-"
+
+	K8sAffinityMap = "affinity-map-"
 )
 
 func setActionVerdict(key int, chain ...string) *nftableslib.RuleAction {

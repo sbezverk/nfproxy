@@ -20,6 +20,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"time"
 
 	"github.com/google/nftables"
 	"github.com/sbezverk/nftableslib"
@@ -61,8 +62,8 @@ type EPnft struct {
 // a chain prefix "k8s-nfproxy-svc-" or "k8s-nfproxy-fw-" and service's unique ID
 type SVCChain struct {
 	// Service carries the name of service's specific chain, this chain usually points to one or more endpoit chains
-	ServiceID string
-	Chain     map[string]*Rule
+	//	ServiceID string
+	Chain map[string]*Rule
 }
 
 // SVCnft defines per IP Family nftables chains used by individual service.
@@ -70,6 +71,9 @@ type SVCnft struct {
 	Interface     *NFTInterface
 	Chains        map[nftables.TableFamily]SVCChain
 	WithEndpoints bool
+	WithAffinity  bool
+	MaxAgeSeconds int
+	ServiceID     string
 }
 
 // InitNFTables initializes connection to netfilter and instantiates nftables table interface
@@ -255,8 +259,7 @@ func deleteChainRules(ci nftableslib.ChainsInterface, chain string, rules []uint
 func GetSvcChain(tableFamily nftables.TableFamily, svcID string) map[nftables.TableFamily]SVCChain {
 	chains := make(map[nftables.TableFamily]SVCChain)
 	chain := SVCChain{
-		ServiceID: svcID,
-		Chain:     make(map[string]*Rule),
+		Chain: make(map[string]*Rule),
 	}
 	//  K8sSvcPrefix+svcID is services chain used by a specific service
 	chain.Chain[K8sSvcPrefix+svcID] = &Rule{
@@ -535,4 +538,44 @@ func programClusterIPRules(ci nftableslib.ChainsInterface, rules []nftableslib.R
 	}
 
 	return ids, nil
+}
+
+// AddServiceAffinityMap creates a map used for Service's Affinity implementation. When service affinity is
+// enabled, this map will be updated by "update/refreshed" from aging out by a rule of each aviable endpoint.
+func AddServiceAffinityMap(nfti *NFTInterface, tableFamily nftables.TableFamily, svcID string, timeout int) error {
+	si := nfti.SIv4
+	if tableFamily == nftables.TableFamilyIPv6 {
+		si = nfti.SIv6
+	}
+
+	affinityMap := nftableslib.SetAttributes{
+		Name:       K8sAffinityMap + svcID,
+		Constant:   false,
+		IsMap:      true,
+		HasTimeout: true,
+		Timeout:    time.Duration(time.Second * time.Duration(timeout)),
+		KeyType:    nftables.TypeIPAddr,
+		DataType:   nftables.TypeInteger,
+	}
+
+	_, err := si.Sets().CreateSet(&affinityMap, nil)
+	if err != nil {
+		return fmt.Errorf("failed to create affinity map %s with error: %+v", K8sAffinityMap+svcID, err)
+	}
+
+	return nil
+}
+
+// DeleteServiceAffinityMap removes service's affinity map
+func DeleteServiceAffinityMap(nfti *NFTInterface, tableFamily nftables.TableFamily, svcID string) error {
+	si := nfti.SIv4
+	if tableFamily == nftables.TableFamilyIPv6 {
+		si = nfti.SIv6
+	}
+
+	if err := si.Sets().DelSet(K8sAffinityMap + svcID); err != nil {
+		return fmt.Errorf("failed to delete affinity map %s with error: %+v", K8sAffinityMap+svcID, err)
+	}
+
+	return nil
 }
