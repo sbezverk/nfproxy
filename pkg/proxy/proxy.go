@@ -113,7 +113,13 @@ func (p *proxy) addServicePort(svcPortName ServicePortName, servicePort *v1.Serv
 	}
 	svcID := servicePortSvcID(svcPortName.String(), string(servicePort.Protocol), baseSvcInfo.String())
 	baseSvcInfo.svcnft.Interface = p.nfti
+	baseSvcInfo.svcnft.ServiceID = svcID
 	baseSvcInfo.svcnft.Chains = nftables.GetSvcChain(tableFamily, svcID)
+	// Check if new ServicePort requests Affinity, get the timeout then
+	if svc.Spec.SessionAffinity == v1.ServiceAffinityClientIP {
+		baseSvcInfo.svcnft.WithAffinity = true
+		baseSvcInfo.svcnft.MaxAgeSeconds = int(*svc.Spec.SessionAffinityConfig.ClientIP.TimeoutSeconds)
+	}
 	// Check if new ServicePort already has or not corresponding endpoints entries, if not then
 	// ServicePort is added to No Endpoint set.
 	if len(p.endpointsMap[svcPortName]) == 0 {
@@ -130,6 +136,12 @@ func (p *proxy) addServicePort(svcPortName ServicePortName, servicePort *v1.Serv
 	if err := nftables.AddServiceChains(p.nfti, tableFamily, svcID); err != nil {
 		klog.Errorf("failed to add service port %s chains with error: %+v", svcPortName.String(), err)
 		return
+	}
+	if baseSvcInfo.svcnft.WithAffinity {
+		if err := nftables.AddServiceAffinityMap(p.nfti, tableFamily, svcID, baseSvcInfo.svcnft.MaxAgeSeconds); err != nil {
+			klog.Errorf("failed to add service affinity map for port %s with error: %+v", svcPortName.String(), err)
+			return
+		}
 	}
 	// Populting cluster, external and loadbalancer sets with Service Port information
 	if err := p.addServicePortToSets(baseSvcInfo, tableFamily, svcID); err != nil {
@@ -183,7 +195,7 @@ func (p *proxy) deleteServicePort(svcPortName ServicePortName, servicePort *v1.S
 	}
 	// Remove svcPortName related chains and rules
 	// Populting cluster, external and loadbalancer sets with Service Port information
-	if err := p.removeServicePortFromSets(baseInfo, tableFamily, baseInfo.svcnft.Chains[tableFamily].ServiceID); err != nil {
+	if err := p.removeServicePortFromSets(baseInfo, tableFamily, baseInfo.svcnft.ServiceID); err != nil {
 		klog.Errorf("failed to remove service port %s from sets with error: %+v", svcPortName.String(), err)
 	}
 	// Remove svcPortName related chains and rules
@@ -194,8 +206,14 @@ func (p *proxy) deleteServicePort(svcPortName ServicePortName, servicePort *v1.S
 			}
 		}
 	}
+	if baseInfo.svcnft.WithAffinity {
+		if err := nftables.DeleteServiceAffinityMap(p.nfti, tableFamily, baseInfo.svcnft.ServiceID); err != nil {
+			klog.Errorf("failed to delete service affinity map for port %s with error: %+v", svcPortName.String(), err)
+			return
+		}
+	}
 	// Removing service port specific chains
-	if err := nftables.DeleteServiceChains(p.nfti, tableFamily, baseInfo.svcnft.Chains[tableFamily].ServiceID); err != nil {
+	if err := nftables.DeleteServiceChains(p.nfti, tableFamily, baseInfo.svcnft.ServiceID); err != nil {
 		klog.Errorf("failed to delete chains for service port name: %s with error: %+v", svcPortName.String(), err)
 	}
 
@@ -233,6 +251,8 @@ func (p *proxy) UpdateService(svcOld, svcNew *v1.Service) {
 	p.processExternalIPChanges(svcNew, storedSvc)
 	// Step 3 is to detect changes for LoadBalancer IPs; add new and remove old ones
 	p.processLoadBalancerIPChange(svcNew, storedSvc)
+	// Step 4 is to detect changes in Service Affinity
+	p.processAffinityChange(svcNew, storedSvc)
 
 	// Update service in cache after applying all changes
 	p.cache.storeSvcInCache(svcNew)
@@ -329,7 +349,7 @@ func (p *proxy) updateServiceChain(svcPortName ServicePortName, tableFamily util
 	}
 	// Programming rules for existing endpoints
 	epsChains := p.getServicePortEndpointChains(svcPortName, tableFamily)
-	cn := nftables.K8sSvcPrefix + entry.svcnft.Chains[tableFamily].ServiceID
+	cn := nftables.K8sSvcPrefix + entry.svcnft.ServiceID
 	svcRules := entry.svcnft.Chains[tableFamily].Chain[cn]
 	// Check if the service still has any backends
 	if len(epsChains) != 0 {
@@ -629,7 +649,7 @@ func (p *proxy) processServicePortChanges(svcNew *v1.Service, storedSvc *v1.Serv
 }
 
 // processExternalIPChanges is called from the service Update handler, it checks for any changes in
-// ExternalIPs and re-program new entries for all ServicePort of the changed service.
+// ExternalIPs and re-program new entries for all ServicePorts.
 func (p *proxy) processExternalIPChanges(svcNew *v1.Service, storedSvc *v1.Service) {
 	if !compareSliceOfString(storedSvc.Spec.ExternalIPs, svcNew.Spec.ExternalIPs) {
 		// Check for new ExternalIPs to add
@@ -672,7 +692,7 @@ func (p *proxy) processExternalIPChanges(svcNew *v1.Service, storedSvc *v1.Servi
 }
 
 // processLoadBalancerIPChange is called from the service Update handler, it checks for any changes in
-// ExternalIPs and re-program new entries for all ServicePort of the changed service.
+// LoadBalancer's IPs and re-program new entries for all ServicePorts.
 func (p *proxy) processLoadBalancerIPChange(svcNew *v1.Service, storedSvc *v1.Service) {
 	// Check if new and stored service status is equal or not, if equal no processing required
 	if !isIngressEqual(svcNew.Status.LoadBalancer.Ingress, storedSvc.Status.LoadBalancer.Ingress) {
@@ -713,6 +733,41 @@ func (p *proxy) processLoadBalancerIPChange(svcNew *v1.Service, storedSvc *v1.Se
 					nftables.RemoveFromSet(p.nfti, tableFamily, servicePort.Protocol, addr, uint16(servicePort.Port), nftables.K8sLoadbalancerIPSet, nftables.K8sSvcPrefix+svcID)
 					nftables.RemoveFromSet(p.nfti, tableFamily, servicePort.Protocol, addr, uint16(servicePort.Port), nftables.K8sMarkMasqSet, nftables.K8sNATDoMarkMasq)
 				}
+			}
+		}
+	}
+}
+
+// processAffinityChange is called from the service Update handler, it checks for changes in
+// Affinity and re-program new entries for all ServicePort of the changed service.
+func (p *proxy) processAffinityChange(svcNew *v1.Service, storedSvc *v1.Service) {
+	if svcNew.Spec.SessionAffinity == storedSvc.Spec.SessionAffinity {
+		return
+	}
+	klog.V(5).Infof("Change in Service Affinity of service %s/%s detected", svcNew.ObjectMeta.Namespace, svcNew.ObjectMeta.Name)
+	_, tableFamily := getIPFamily(svcNew.Spec.ClusterIP)
+	if svcNew.Spec.SessionAffinity == v1.ServiceAffinityClientIP {
+		klog.V(6).Infof("Adding Service Affinity to Service Ports")
+		for _, servicePort := range svcNew.Spec.Ports {
+			svcPortName := getSvcPortName(svcNew.Name, svcNew.Namespace, servicePort.Name, servicePort.Protocol)
+			svcID := p.serviceMap[svcPortName].(*serviceInfo).BaseServiceInfo.svcnft.ServiceID
+			maxAgeSeconds := p.serviceMap[svcPortName].(*serviceInfo).BaseServiceInfo.svcnft.MaxAgeSeconds
+			klog.V(6).Infof("Adding service affinity map for port: %s service ID: %s timeout: %d", svcPortName.String(), svcID, maxAgeSeconds)
+			if err := nftables.AddServiceAffinityMap(p.nfti, tableFamily, svcID, maxAgeSeconds); err != nil {
+				klog.Errorf("failed to add service affinity map for port %s with error: %+v", svcPortName.String(), err)
+				return
+			}
+		}
+	}
+	if svcNew.Spec.SessionAffinity == v1.ServiceAffinityNone {
+		klog.V(6).Infof("Removing Service Affinity from Service Ports")
+		for _, servicePort := range svcNew.Spec.Ports {
+			svcPortName := getSvcPortName(svcNew.Name, svcNew.Namespace, servicePort.Name, servicePort.Protocol)
+			svcID := p.serviceMap[svcPortName].(*serviceInfo).BaseServiceInfo.svcnft.ServiceID
+			klog.V(6).Infof("Deleting service affinity map for port %s service ID: %s", svcPortName.String(), svcID)
+			if err := nftables.DeleteServiceAffinityMap(p.nfti, tableFamily, svcID); err != nil {
+				klog.Errorf("failed to delete service affinity map for port %s with error: %+v", svcPortName.String(), err)
+				return
 			}
 		}
 	}
