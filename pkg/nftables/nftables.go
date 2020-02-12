@@ -45,24 +45,35 @@ type NFTInterface struct {
 	sets            map[string]*nftables.Set
 }
 
-// Rule defines nftables chain name, rule and once programmed, rule id
+// Rule defines nftables chain name, rule and once programmed, rule id is stored in RuleID slice.
 type Rule struct {
 	Chain  string
 	RuleID []uint64
+}
+
+// EPRule defines Endpoint specific nftables rule, it carries endpoint specific variables in addition
+// to common ones found in Rule struct
+type EPRule struct {
+	Rule
+	// EpIndex defines an endpoint index for a specific service port. If the service port
+	// has multiple endpoints, each and point has a unique index. It is used for Service Affinity
+	// implementation as endpoint's "update" rule must update only its own index.
+	EpIndex       int
+	WithAffinity  bool
+	MaxAgeSeconds int
+	ServiceID     string
 }
 
 // EPnft defines per endpoint nftables info. This information allows manipulating
 // rules, sets in ipv4 and ipv6 tables and chains.
 type EPnft struct {
 	Interface *NFTInterface
-	Rule      map[nftables.TableFamily]*Rule
+	Rule      map[nftables.TableFamily]*EPRule
 }
 
 // SVCChain defines a map of chains a service uses for its rules, the key is chain names, it is combined from
 // a chain prefix "k8s-nfproxy-svc-" or "k8s-nfproxy-fw-" and service's unique ID
 type SVCChain struct {
-	// Service carries the name of service's specific chain, this chain usually points to one or more endpoit chains
-	//	ServiceID string
 	Chain map[string]*Rule
 }
 
@@ -189,6 +200,63 @@ func AddEndpointRules(nfti *NFTInterface, tableFamily nftables.TableFamily, chai
 	}
 
 	return id, nil
+}
+
+// AddEndpointUpdateRules creates an ednpoint chain and programs Update rule, this rules will update
+// (refresh) endpoint entry in a Service Affinity map.
+func AddEndpointUpdateRule(nfti *NFTInterface, tableFamily nftables.TableFamily, chain string, index int, svcID string, timeout int) ([]uint64, error) {
+	ci := ciForTableFamily(nfti, tableFamily)
+	si := nfti.SIv4
+	if tableFamily == nftables.TableFamilyIPv6 {
+		si = nfti.SIv6
+	}
+	s, err := si.Sets().GetSetByName(K8sAffinityMap + svcID)
+	if err != nil {
+		return nil, err
+	}
+	rules := []nftableslib.Rule{
+		{
+			Dynamic: &nftableslib.Dynamic{
+				Match: nftableslib.MatchTypeL3Src,
+				Op:    unix.NFT_DYNSET_OP_UPDATE,
+				Key:   uint32(index),
+				SetRef: &nftableslib.SetRef{
+					Name: s.Name,
+					ID:   s.ID,
+				},
+			},
+		},
+	}
+
+	if err := ci.Chains().CreateImm(chain, nil); err != nil {
+		return nil, fmt.Errorf("failed to create endpoint chain %s with error: %+v", chain, err)
+	}
+	ri, err := ci.Chains().Chain(chain)
+	if err != nil {
+		return nil, fmt.Errorf("fail to get rules' interface for endpoint chain %s with error: %+v", chain, err)
+	}
+	rules[0].Position = 0
+	id, err := ri.Rules().InsertImm(&rules[0])
+	if err != nil {
+		return nil, fmt.Errorf("fail to insert Update rule program endpoints rules for service chain %s with error: %+v", chain, err)
+	}
+
+	return []uint64{id}, nil
+}
+
+// DeleteEndpointUpdateRule removes Update rule when Service Port's Session Affinity confiugration is removed.
+func DeleteEndpointUpdateRule(nfti *NFTInterface, tableFamily nftables.TableFamily, chain string, updateRuleID int) error {
+	ci := ciForTableFamily(nfti, tableFamily)
+	ri, err := ci.Chains().Chain(chain)
+	if err != nil {
+		return fmt.Errorf("fail to get rules' interface for endpoint chain %s with error: %+v", chain, err)
+	}
+
+	if err := ri.Rules().DeleteImm(uint64(updateRuleID)); err != nil {
+		return fmt.Errorf("fail to delete Update rule program endpoints rules for service chain %s with error: %+v", chain, err)
+	}
+
+	return nil
 }
 
 // DeleteEndpointRules delete nftables rules associated with an endpoint and then deletes endpoint's chain

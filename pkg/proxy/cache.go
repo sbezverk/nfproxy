@@ -22,6 +22,7 @@ import (
 
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/klog"
 )
 
 // cache defines a struct to store latest version of the seen service or endpoint. Once a service/endpoint add received
@@ -47,6 +48,7 @@ func (c *cache) getCachedSvcVersion(name, namespace string) (string, error) {
 
 // getLastKnownSvcFromCache return pointer to the latest known/stored instance of the service
 func (c *cache) getLastKnownSvcFromCache(name, namespace string) (*v1.Service, error) {
+	klog.V(6).Infof("retrieving service %s/%s from the cache", namespace, name)
 	c.Lock()
 	defer c.Unlock()
 	s, ok := c.svcCache[types.NamespacedName{Name: name, Namespace: namespace}]
@@ -54,13 +56,14 @@ func (c *cache) getLastKnownSvcFromCache(name, namespace string) (*v1.Service, e
 		return nil, fmt.Errorf("service %s/%s not found in the cache", namespace, name)
 	}
 
-	return s, nil
+	return s.DeepCopy(), nil
 }
 
 // storeSvcInCache stores in the cache instance of a service, if cache does not have already
 // service, it will be added, if it already has, iy will be replaced with the one passed
 // as a parameter.
 func (c *cache) storeSvcInCache(s *v1.Service) {
+	klog.V(6).Infof("storing service %s/%s in the cache", s.ObjectMeta.Namespace, s.ObjectMeta.Name)
 	c.Lock()
 	defer c.Unlock()
 	if _, ok := c.svcCache[types.NamespacedName{Name: s.ObjectMeta.Name, Namespace: s.ObjectMeta.Namespace}]; ok {
@@ -71,6 +74,7 @@ func (c *cache) storeSvcInCache(s *v1.Service) {
 
 // removeSvcFromCache removes stored service from cache.
 func (c *cache) removeSvcFromCache(name, namespace string) {
+	klog.V(6).Infof("removing service %s/%s from the cache", namespace, name)
 	c.Lock()
 	defer c.Unlock()
 	if _, ok := c.svcCache[types.NamespacedName{Name: name, Namespace: namespace}]; ok {

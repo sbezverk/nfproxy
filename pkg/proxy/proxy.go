@@ -18,7 +18,6 @@ package proxy
 
 import (
 	"fmt"
-	"strings"
 	"sync"
 	"time"
 
@@ -138,9 +137,19 @@ func (p *proxy) addServicePort(svcPortName ServicePortName, servicePort *v1.Serv
 		return
 	}
 	if baseSvcInfo.svcnft.WithAffinity {
+		klog.V(6).Infof("Service Port: %+v needs Session Affinity rules", svcPortName)
 		if err := nftables.AddServiceAffinityMap(p.nfti, tableFamily, svcID, baseSvcInfo.svcnft.MaxAgeSeconds); err != nil {
 			klog.Errorf("failed to add service affinity map for port %s with error: %+v", svcPortName.String(), err)
 			return
+		}
+		// Since ServicePort now has Service Affinity configuration, need to check if it has already Endpoints and if it is the case
+		// each Endpoint needs "Update" rule to be inserted as a very first rule.
+		if baseSvcInfo.svcnft.WithEndpoints {
+			eps, _ := p.endpointsMap[svcPortName]
+			klog.V(6).Infof("Service Port %+v needs its %d endpoint(s) to be programmed with update rule", svcPortName, len(eps))
+			if err := p.addAffinityEndpoint(eps, tableFamily, svcID, baseSvcInfo.svcnft.MaxAgeSeconds); err != nil {
+				klog.Errorf("failed to add endpoint affinity update rule for port %s with error: %+v", svcPortName.String(), err)
+			}
 		}
 	}
 	// Populting cluster, external and loadbalancer sets with Service Port information
@@ -157,7 +166,7 @@ func (p *proxy) addServicePort(svcPortName ServicePortName, servicePort *v1.Serv
 
 func (p *proxy) DeleteService(svc *v1.Service) {
 	s := time.Now()
-	defer klog.V(5).Infof("DeleteService ran for: %d nanoseconds", time.Since(s))
+	defer klog.V(5).Infof("DeleteService for a service %s/%s ran for: %d nanoseconds", svc.Namespace, svc.Name, time.Since(s))
 	klog.V(5).Infof("DeleteService for a service %s/%s", svc.Namespace, svc.Name)
 	if svc == nil {
 		return
@@ -179,12 +188,16 @@ func (p *proxy) deleteServicePort(svcPortName ServicePortName, servicePort *v1.S
 		klog.Warningf("Service port name %+v does not exist", svcPortName)
 		return
 	}
+	klog.V(6).Infof("deleting service port: %s for service: %s/%s", svcPortName.String(), svc.Namespace, svc.Name)
 	// Creating new baseinfo based on the current state of the service port
-	baseInfo := newBaseServiceInfo(servicePort, svc)
+
+	//	baseInfo := newBaseServiceInfo(servicePort, svc)
 	// Storing state of Endpoints in new baseinfo for proper cleanup from no-endpoint set
-	baseInfo.svcnft = svcInfo.(*serviceInfo).BaseServiceInfo.svcnft
-	baseInfo.svcName = svcInfo.(*serviceInfo).BaseServiceInfo.svcName
-	baseInfo.svcNamespace = svcInfo.(*serviceInfo).BaseServiceInfo.svcNamespace
+	baseInfo := svcInfo.(*serviceInfo).BaseServiceInfo
+
+	//	baseInfo.svcnft = svcInfo.(*serviceInfo).BaseServiceInfo.svcnft
+	//	baseInfo.svcName = svcInfo.(*serviceInfo).BaseServiceInfo.svcName
+	//	baseInfo.svcNamespace = svcInfo.(*serviceInfo).BaseServiceInfo.svcNamespace
 	_, tableFamily := getIPFamily(baseInfo.ClusterIP().String())
 
 	if !baseInfo.svcnft.WithEndpoints {
@@ -287,18 +300,26 @@ func (p *proxy) addEndpoint(svcPortName ServicePortName, addr *v1.EndpointAddres
 	// Adding to endpoint base information, structures to carry nftables related info
 	baseEndpointInfo.epnft = &nftables.EPnft{
 		Interface: p.nfti,
-		Rule:      make(map[utilnftables.TableFamily]*nftables.Rule),
+		Rule:      make(map[utilnftables.TableFamily]*nftables.EPRule),
 	}
 	cn := servicePortEndpointChainName(svcPortName.String(), string(port.Protocol), baseEndpointInfo.Endpoint)
 	// Initializing ip table family depending on endpoint's family ipv4 or ipv6
-	epRule := nftables.Rule{
-		Chain: cn,
-		// RuleID 0 is indicator that the nftables rule has not been yet programmed, once it is programed
-		// RuleID will be updated to real value.
-		RuleID: nil,
+	epRule := nftables.EPRule{
+		EpIndex: len(p.endpointsMap[svcPortName]),
+	}
+	epRule.Chain = cn
+	// RuleID nil is indicator that the nftables rule has not been yet programmed, once it is programed
+	// RuleID will be updated to real value.
+	epRule.RuleID = nil
+	// Check if corresponding ServicePort has Service Affinity set and copy parameters to endpoint rule struct
+	epRule.WithAffinity = false
+	if svc, ok := p.serviceMap[svcPortName]; ok {
+		epRule.WithAffinity = svc.(*serviceInfo).svcnft.WithAffinity
+		epRule.MaxAgeSeconds = svc.(*serviceInfo).svcnft.MaxAgeSeconds
+		epRule.ServiceID = svc.(*serviceInfo).svcnft.ServiceID
 	}
 	baseEndpointInfo.epnft.Rule[ipTableFamily] = &epRule
-	if err := p.addEndpointRule(&epRule, ipTableFamily, cn, svcPortName, &epKey{port.Protocol, addr.IP, port.Port}); err != nil {
+	if err := p.addEndpointRules(&epRule, ipTableFamily, cn, svcPortName, &epKey{port.Protocol, addr.IP, port.Port}); err != nil {
 		klog.Errorf("failed to add endpoint rules for Service Port Name: %+v with error: %+v", svcPortName, err)
 		return err
 	}
@@ -310,15 +331,28 @@ func (p *proxy) addEndpoint(svcPortName ServicePortName, addr *v1.EndpointAddres
 	return nil
 }
 
-func (p *proxy) addEndpointRule(epRule *nftables.Rule, tableFamily utilnftables.TableFamily, cn string, svcPortName ServicePortName, key *epKey) error {
+func (p *proxy) addEndpointRules(epRule *nftables.EPRule, tableFamily utilnftables.TableFamily, cn string, svcPortName ServicePortName, key *epKey) error {
 	var ruleIDs []uint64
 	var err error
 
+	// If Corresponding Service Port has Affinity configured, then endpoint must have Update rule which will refresh Service Port
+	// affinity map for an endpoint specific source address and index.
+	if epRule.WithAffinity {
+		ruleIDs, err = nftables.AddEndpointUpdateRule(p.nfti, tableFamily, cn, epRule.EpIndex, epRule.ServiceID, epRule.MaxAgeSeconds)
+		if err != nil {
+			return err
+		}
+		epRule.RuleID = ruleIDs
+	}
 	ruleIDs, err = nftables.AddEndpointRules(p.nfti, tableFamily, cn, key.ipaddr, key.proto, key.port)
 	if err != nil {
 		return err
 	}
-	epRule.RuleID = ruleIDs
+	if epRule.RuleID == nil {
+		epRule.RuleID = ruleIDs
+	} else {
+		epRule.RuleID = append(epRule.RuleID, ruleIDs...)
+	}
 
 	return nil
 }
@@ -520,7 +554,7 @@ func (p *proxy) UpdateEndpoints(epOld, epNew *v1.Endpoints) {
 		return
 	}
 	for _, e := range info {
-		if !isPortInSubset(storedEp.Subsets, e.port) {
+		if !isPortInSubset(storedEp.Subsets, e.port, e.addr) {
 			klog.V(5).Infof("updating Endpoint %s/%s Service Port name: %+v", epNew.Namespace, epNew.Name, e.name)
 			if err := p.addEndpoint(e.name, e.addr, e.port); err != nil {
 				klog.Errorf("failed to update Endpoint %s/%s port %+v with error: %+v", epNew.Namespace, epNew.Name, *e.port, err)
@@ -537,7 +571,7 @@ func (p *proxy) UpdateEndpoints(epOld, epNew *v1.Endpoints) {
 		if !ok {
 			continue
 		}
-		if !isPortInSubset(epNew.Subsets, e.port) {
+		if !isPortInSubset(epNew.Subsets, e.port, e.addr) {
 			klog.V(5).Infof("removing Endpoint %s/%s port %+v", epNew.Namespace, epNew.Name, *e.port)
 			if err := p.deleteEndpoint(e.name, e.addr, e.port, eps); err != nil {
 				klog.Errorf("failed to remove Endpoint %s/%s port %+v with error: %+v", epNew.Namespace, epNew.Name, *e.port, err)
@@ -757,14 +791,37 @@ func (p *proxy) processAffinityChange(svcNew *v1.Service, storedSvc *v1.Service)
 				klog.Errorf("failed to add service affinity map for port %s with error: %+v", svcPortName.String(), err)
 				return
 			}
+			// Since ServicePort now has Service Affinity configuration, need to check if it has already Endpoints and if it is the case
+			// each Endpoint needs "Update" rule to be inserted as a very first rule.
+			if !p.serviceMap[svcPortName].(*serviceInfo).BaseServiceInfo.svcnft.WithEndpoints {
+				continue
+			}
+			p.mu.Lock()
+			eps, _ := p.endpointsMap[svcPortName]
+			if err := p.addAffinityEndpoint(eps, tableFamily, svcID, maxAgeSeconds); err != nil {
+				klog.Errorf("failed to add endpoint affinity update rule for port %s with error: %+v", svcPortName.String(), err)
+			}
+			p.mu.Unlock()
 		}
+		return
 	}
 	if svcNew.Spec.SessionAffinity == v1.ServiceAffinityNone {
 		klog.V(6).Infof("Removing Service Affinity from Service Ports")
 		for _, servicePort := range svcNew.Spec.Ports {
 			svcPortName := getSvcPortName(svcNew.Name, svcNew.Namespace, servicePort.Name, servicePort.Protocol)
 			svcID := p.serviceMap[svcPortName].(*serviceInfo).BaseServiceInfo.svcnft.ServiceID
-			klog.V(6).Infof("Deleting service affinity map for port %s service ID: %s", svcPortName.String(), svcID)
+			klog.V(5).Infof("Deleting service affinity map for port %s service ID: %s", svcPortName.String(), svcID)
+			// Since ServicePort now has Service Affinity configuration removed, need to check if it has already Endpoints and if it is the case
+			// each Endpoint needs to have "Update" rule removed.
+			if p.serviceMap[svcPortName].(*serviceInfo).BaseServiceInfo.svcnft.WithEndpoints {
+				p.mu.Lock()
+				eps, _ := p.endpointsMap[svcPortName]
+				if err := p.deleteAffinityEndpoint(eps, tableFamily); err != nil {
+					klog.Errorf("failed to delete endpoint affinity update rule for port %s with error: %+v", svcPortName.String(), err)
+				}
+				p.mu.Unlock()
+			}
+			// There should be no more reference to Affinity map in any endpoints, it should be safe to delete it.
 			if err := nftables.DeleteServiceAffinityMap(p.nfti, tableFamily, svcID); err != nil {
 				klog.Errorf("failed to delete service affinity map for port %s with error: %+v", svcPortName.String(), err)
 				return
@@ -773,31 +830,42 @@ func (p *proxy) processAffinityChange(svcNew *v1.Service, storedSvc *v1.Service)
 	}
 }
 
-// isAddressInIngress returns bool and index of the address in v1.LoadBalancerIngress slice
-func isAddressInIngress(ingress []v1.LoadBalancerIngress, address string) (int, bool) {
-	for i, addr := range ingress {
-		if strings.Compare(addr.IP, address) == 0 {
-			return i, true
+// addAffinityEndpoint is called when Service Update handler detects change in Service's Session Affinity, specifically
+// Session Affinity gets added to the service. This function will insert Update rule to every endpoint associated with a Service Port.
+func (p *proxy) addAffinityEndpoint(eps []Endpoint, tableFamily utilnftables.TableFamily, svcID string, maxAgeSeconds int) error {
+	for _, ep := range eps {
+		chain := ep.(*endpointsInfo).BaseEndpointInfo.epnft.Rule[tableFamily].Chain
+		index := ep.(*endpointsInfo).BaseEndpointInfo.epnft.Rule[tableFamily].EpIndex
+		if ruleID, err := nftables.AddEndpointUpdateRule(p.nfti, tableFamily, chain, index, svcID, maxAgeSeconds); err != nil {
+			return err
+		} else {
+			ep.(*endpointsInfo).BaseEndpointInfo.epnft.Rule[tableFamily].WithAffinity = true
+			ep.(*endpointsInfo).BaseEndpointInfo.epnft.Rule[tableFamily].MaxAgeSeconds = maxAgeSeconds
+			// Update rule in Endpoint chain must always be the very first one, inserting it before any already existing rules.
+			ep.(*endpointsInfo).BaseEndpointInfo.epnft.Rule[tableFamily].RuleID = append(ruleID, ep.(*endpointsInfo).BaseEndpointInfo.epnft.Rule[tableFamily].RuleID...)
 		}
 	}
-	return 0, false
+
+	return nil
 }
 
-// isIngressEqua checks equality of two v1.LoadBalancerIngress slices in terms of length and
-// presence of the same IPs in both.
-func isIngressEqual(a []v1.LoadBalancerIngress, b []v1.LoadBalancerIngress) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := 0; i < len(a); i++ {
-		if _, found := isAddressInIngress(b, a[i].IP); !found {
-			return false
+// deleteAffinityEndpoint is called when Service Update handler detects change in Service's Session Affinity,
+// this function will remove Update rule from all endpoints associated with a Service Port.
+func (p *proxy) deleteAffinityEndpoint(eps []Endpoint, tableFamily utilnftables.TableFamily) error {
+	for _, ep := range eps {
+		chain := ep.(*endpointsInfo).BaseEndpointInfo.epnft.Rule[tableFamily].Chain
+		// Update rule is always first rule in the endpoint chain
+		ruleID := ep.(*endpointsInfo).BaseEndpointInfo.epnft.Rule[tableFamily].RuleID[0]
+		klog.V(6).Infof("Deleting Update rule for endpoint chain: %s, rule handle: %d", chain, ruleID)
+		if err := nftables.DeleteEndpointUpdateRule(p.nfti, tableFamily, chain, int(ruleID)); err != nil {
+			return err
+		} else {
+			ep.(*endpointsInfo).BaseEndpointInfo.epnft.Rule[tableFamily].WithAffinity = false
+			ep.(*endpointsInfo).BaseEndpointInfo.epnft.Rule[tableFamily].MaxAgeSeconds = 0
+			// Update rule in Endpoint chain must always be the very first one, inserting it before any already existing rules.
+			ep.(*endpointsInfo).BaseEndpointInfo.epnft.Rule[tableFamily].RuleID = ep.(*endpointsInfo).BaseEndpointInfo.epnft.Rule[tableFamily].RuleID[1:]
 		}
 	}
-	for i := 0; i < len(b); i++ {
-		if _, found := isAddressInIngress(a, b[i].IP); !found {
-			return false
-		}
-	}
-	return true
+
+	return nil
 }

@@ -122,11 +122,13 @@ func getIPFamily(ipaddr string) (v1.IPFamily, utilnftables.TableFamily) {
 	return ipFamily, ipTableFamily
 }
 
-func isPortInSubset(subsets []v1.EndpointSubset, port *v1.EndpointPort) bool {
+func isPortInSubset(subsets []v1.EndpointSubset, port *v1.EndpointPort, addr *v1.EndpointAddress) bool {
 	for _, s := range subsets {
-		for _, p := range s.Ports {
-			if p.Name == port.Name && p.Port == port.Port && p.Protocol == port.Protocol {
-				return true
+		for _, subsetAddr := range s.Addresses {
+			for _, p := range s.Ports {
+				if p.Name == port.Name && p.Port == port.Port && p.Protocol == port.Protocol && strings.Compare(subsetAddr.IP, addr.IP) == 0 {
+					return true
+				}
 			}
 		}
 	}
@@ -179,4 +181,33 @@ func isStringInSlice(a string, b []string) bool {
 	}
 
 	return false
+}
+
+// isAddressInIngress returns bool and index of the address in v1.LoadBalancerIngress slice
+func isAddressInIngress(ingress []v1.LoadBalancerIngress, address string) (int, bool) {
+	for i, addr := range ingress {
+		if strings.Compare(addr.IP, address) == 0 {
+			return i, true
+		}
+	}
+	return 0, false
+}
+
+// isIngressEqua checks equality of two v1.LoadBalancerIngress slices in terms of length and
+// presence of the same IPs in both.
+func isIngressEqual(a []v1.LoadBalancerIngress, b []v1.LoadBalancerIngress) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := 0; i < len(a); i++ {
+		if _, found := isAddressInIngress(b, a[i].IP); !found {
+			return false
+		}
+	}
+	for i := 0; i < len(b); i++ {
+		if _, found := isAddressInIngress(a, b[i].IP); !found {
+			return false
+		}
+	}
+	return true
 }
