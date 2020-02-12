@@ -18,6 +18,7 @@ package proxy
 
 import (
 	"fmt"
+	"reflect"
 	"sync"
 
 	v1 "k8s.io/api/core/v1"
@@ -66,10 +67,11 @@ func (c *cache) storeSvcInCache(s *v1.Service) {
 	klog.V(6).Infof("storing service %s/%s in the cache", s.ObjectMeta.Namespace, s.ObjectMeta.Name)
 	c.Lock()
 	defer c.Unlock()
-	if _, ok := c.svcCache[types.NamespacedName{Name: s.ObjectMeta.Name, Namespace: s.ObjectMeta.Namespace}]; ok {
-		delete(c.svcCache, types.NamespacedName{Name: s.ObjectMeta.Name, Namespace: s.ObjectMeta.Namespace})
-	}
 	c.svcCache[types.NamespacedName{Name: s.ObjectMeta.Name, Namespace: s.ObjectMeta.Namespace}] = s.DeepCopy()
+	stored := c.svcCache[types.NamespacedName{Name: s.ObjectMeta.Name, Namespace: s.ObjectMeta.Namespace}]
+	if !reflect.DeepEqual(s, stored) {
+		klog.Errorf("mismatch detected between stored: %+v and original service: %+v", stored, s)
+	}
 }
 
 // removeSvcFromCache removes stored service from cache.
@@ -79,6 +81,8 @@ func (c *cache) removeSvcFromCache(name, namespace string) {
 	defer c.Unlock()
 	if _, ok := c.svcCache[types.NamespacedName{Name: name, Namespace: namespace}]; ok {
 		delete(c.svcCache, types.NamespacedName{Name: name, Namespace: namespace})
+	} else {
+		klog.Warningf("service %s/%s not found in the cache", namespace, name)
 	}
 }
 
@@ -98,12 +102,12 @@ func (c *cache) getCachedEpVersion(name, namespace string) (string, error) {
 func (c *cache) getLastKnownEpFromCache(name, namespace string) (*v1.Endpoints, error) {
 	c.Lock()
 	defer c.Unlock()
-	s, ok := c.epCache[types.NamespacedName{Name: name, Namespace: namespace}]
+	ep, ok := c.epCache[types.NamespacedName{Name: name, Namespace: namespace}]
 	if !ok {
 		return nil, fmt.Errorf("endpoint %s/%s not found in the cache", namespace, name)
 	}
 
-	return s, nil
+	return ep.DeepCopy(), nil
 }
 
 // storeEpInCache stores in the cache instance of a endpoint, if cache does not have already
@@ -112,9 +116,6 @@ func (c *cache) getLastKnownEpFromCache(name, namespace string) (*v1.Endpoints, 
 func (c *cache) storeEpInCache(ep *v1.Endpoints) {
 	c.Lock()
 	defer c.Unlock()
-	if _, ok := c.epCache[types.NamespacedName{Name: ep.ObjectMeta.Name, Namespace: ep.ObjectMeta.Namespace}]; ok {
-		delete(c.epCache, types.NamespacedName{Name: ep.ObjectMeta.Name, Namespace: ep.ObjectMeta.Namespace})
-	}
 	c.epCache[types.NamespacedName{Name: ep.ObjectMeta.Name, Namespace: ep.ObjectMeta.Namespace}] = ep.DeepCopy()
 }
 
@@ -124,5 +125,7 @@ func (c *cache) removeEpFromCache(name, namespace string) {
 	defer c.Unlock()
 	if _, ok := c.svcCache[types.NamespacedName{Name: name, Namespace: namespace}]; ok {
 		delete(c.svcCache, types.NamespacedName{Name: name, Namespace: namespace})
+	} else {
+		klog.Warningf("endpoint %s/%s not found in the cache", namespace, name)
 	}
 }

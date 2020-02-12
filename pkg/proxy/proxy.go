@@ -72,7 +72,7 @@ func NewProxy(nfti *nftables.NFTInterface, hostname string, recorder record.Even
 
 func (p *proxy) AddService(svc *v1.Service) {
 	s := time.Now()
-	defer klog.V(5).Infof("AddService ran for: %d nanoseconds", time.Since(s))
+	defer klog.V(5).Infof("AddService for a service %s/%s ran for: %d nanoseconds", svc.Namespace, svc.Name, time.Since(s))
 	// Storing new service in the cache for later reference
 	p.cache.storeSvcInCache(svc)
 	klog.V(5).Infof("AddService for a service %s/%s", svc.Namespace, svc.Name)
@@ -237,7 +237,7 @@ func (p *proxy) deleteServicePort(svcPortName ServicePortName, servicePort *v1.S
 // TODO (sbezverk) Add update logic when Spec's fields example ExternalIPs, LoadbalancerIP etc are updated.
 func (p *proxy) UpdateService(svcOld, svcNew *v1.Service) {
 	s := time.Now()
-	defer klog.V(5).Infof("UpdateService ran for: %d nanoseconds", time.Since(s))
+	defer klog.V(5).Infof("UpdateService for a service %s/%s ran for: %d nanoseconds", svcNew.Namespace, svcNew.Name, time.Since(s))
 	klog.V(5).Infof("UpdateService for a service %s/%s", svcNew.Namespace, svcNew.Name)
 	klog.V(6).Infof("UpdateService for a service Spec: %+v Status: %+v", svcNew.Spec, svcNew.Status)
 	// Check if the version of Last Known Service's version matches with svcOld version
@@ -273,7 +273,7 @@ func (p *proxy) UpdateService(svcOld, svcNew *v1.Service) {
 
 func (p *proxy) AddEndpoints(ep *v1.Endpoints) {
 	s := time.Now()
-	defer klog.V(5).Infof("AddEndpoints ran for: %d nanoseconds", time.Since(s))
+	defer klog.V(5).Infof("AddEndpoints for %s/%s ran for: %d nanoseconds", ep.Namespace, ep.Name, time.Since(s))
 	p.cache.storeEpInCache(ep)
 	klog.V(5).Infof("Add endpoint: %s/%s", ep.Namespace, ep.Name)
 	//	p.UpdateEndpoints(&v1.Endpoints{Subsets: []v1.EndpointSubset{}}, ep)
@@ -409,7 +409,7 @@ func (p *proxy) updateServiceChain(svcPortName ServicePortName, tableFamily util
 
 func (p *proxy) DeleteEndpoints(ep *v1.Endpoints) {
 	s := time.Now()
-	defer klog.V(5).Infof("AddService ran for: %d nanoseconds", time.Since(s))
+	defer klog.V(5).Infof("DeleteEndpoints for %s/%s ran for: %d nanoseconds", ep.Namespace, ep.Name, time.Since(s))
 	klog.V(5).Infof("Delete endpoint: %s/%s", ep.Namespace, ep.Name)
 	info, err := processEpSubsets(ep)
 	if err != nil {
@@ -524,7 +524,7 @@ func processEpSubsets(ep *v1.Endpoints) ([]epInfo, error) {
 
 func (p *proxy) UpdateEndpoints(epOld, epNew *v1.Endpoints) {
 	s := time.Now()
-	defer klog.V(5).Infof("UpdateEndpoints ran for: %d nanoseconds", time.Since(s))
+	defer klog.V(5).Infof("UpdateEndpoints for %s/%s ran for: %d nanoseconds", epNew.Namespace, epNew.Name, time.Since(s))
 	if epNew.Namespace == "" && epNew.Name == "" {
 		// When service gets deleted the endpoint controller triggers an update for an endpoint with no name or namespace
 		// ignoring it

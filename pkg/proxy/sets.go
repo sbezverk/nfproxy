@@ -81,6 +81,7 @@ func (p *proxy) removeServicePortFromSets(servicePort ServicePort, tableFamily u
 	proto := servicePort.Protocol()
 	port := uint16(servicePort.Port())
 	clusterIP := storedSvc.Spec.ClusterIP
+	klog.V(6).Infof("Retrieved service %+v", *storedSvc)
 	klog.V(6).Infof(" removing Service port %s from Cluster IP Set, cluster ip address: %s, protocol: %s port: %d ",
 		servicePort.String(), clusterIP, proto, port)
 
