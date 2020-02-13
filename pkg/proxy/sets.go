@@ -39,8 +39,6 @@ func (p *proxy) addServicePortToSets(servicePort ServicePort, tableFamily utilnf
 
 	if extIPs := servicePort.ExternalIPStrings(); len(extIPs) != 0 {
 		for _, extIP := range extIPs {
-			klog.V(6).Infof(" removing Service port %s from no endpoint list, external ip address: %s, protocol: %s port: %d ",
-				servicePort.String(), extIP, proto, port)
 			if err := nftables.AddToSet(p.nfti, tableFamily, proto, extIP, port, nftables.K8sExternalIPSet, nftables.K8sSvcPrefix+svcID); err != nil {
 				return err
 			}
@@ -81,19 +79,19 @@ func (p *proxy) removeServicePortFromSets(servicePort ServicePort, tableFamily u
 	proto := servicePort.Protocol()
 	port := uint16(servicePort.Port())
 	clusterIP := storedSvc.Spec.ClusterIP
-	klog.V(6).Infof("Retrieved service %+v", *storedSvc)
-	klog.V(6).Infof(" removing Service port %s from Cluster IP Set, cluster ip address: %s, protocol: %s port: %d ",
-		servicePort.String(), clusterIP, proto, port)
+	if clusterIP != "" {
+		klog.V(6).Infof("removing Service port %s from Cluster IP Set, cluster ip address: %s, protocol: %s port: %d ",
+			servicePort.String(), clusterIP, proto, port)
 
-	// cluster IP needs to be added to 2 sets, to K8sClusterIPSet and if masquarade-all is true
-	// then it needs to be added to K8sMarkMasqSet
-	if err := nftables.RemoveFromSet(p.nfti, tableFamily, proto, clusterIP, port, nftables.K8sClusterIPSet, nftables.K8sSvcPrefix+svcID); err != nil {
-		return err
+		// cluster IP needs to be added to 2 sets, to K8sClusterIPSet and if masquarade-all is true
+		// then it needs to be added to K8sMarkMasqSet
+		if err := nftables.RemoveFromSet(p.nfti, tableFamily, proto, clusterIP, port, nftables.K8sClusterIPSet, nftables.K8sSvcPrefix+svcID); err != nil {
+			return err
+		}
+		if err := nftables.RemoveFromSet(p.nfti, tableFamily, proto, clusterIP, port, nftables.K8sMarkMasqSet, nftables.K8sNATDoMarkMasq); err != nil {
+			return err
+		}
 	}
-	if err := nftables.RemoveFromSet(p.nfti, tableFamily, proto, clusterIP, port, nftables.K8sMarkMasqSet, nftables.K8sNATDoMarkMasq); err != nil {
-		return err
-	}
-
 	if extIPs := storedSvc.Spec.ExternalIPs; len(extIPs) != 0 {
 		for _, extIP := range extIPs {
 			klog.V(6).Infof(" removing Service port %s from External IP Set, external ip address: %s, protocol: %s port: %d ",
@@ -156,10 +154,12 @@ func (p *proxy) addToNoEndpointsList(servicePort ServicePort, tableFamily utilnf
 func (p *proxy) removeFromNoEndpointsList(servicePort ServicePort, tableFamily utilnftables.TableFamily) error {
 	proto := servicePort.Protocol()
 	port := uint16(servicePort.Port())
-	klog.V(6).Infof(" removing Service port %s from no endpoint list, cluster ip address: %s, protocol: %s port: %d ",
-		servicePort.String(), servicePort.ClusterIP().String(), proto, port)
-	if err := nftables.RemoveFromSet(p.nfti, tableFamily, proto, servicePort.ClusterIP().String(), port, nftables.K8sNoEndpointsSet, nftables.K8sFilterDoReject); err != nil {
-		return err
+	if servicePort.ClusterIP().String() != "" {
+		klog.V(6).Infof(" removing Service port %s from no endpoint list, cluster ip address: %s, protocol: %s port: %d ",
+			servicePort.String(), servicePort.ClusterIP().String(), proto, port)
+		if err := nftables.RemoveFromSet(p.nfti, tableFamily, proto, servicePort.ClusterIP().String(), port, nftables.K8sNoEndpointsSet, nftables.K8sFilterDoReject); err != nil {
+			return err
+		}
 	}
 	if extIPs := servicePort.ExternalIPStrings(); len(extIPs) != 0 {
 		for _, extIP := range extIPs {
