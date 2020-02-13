@@ -72,7 +72,7 @@ func NewProxy(nfti *nftables.NFTInterface, hostname string, recorder record.Even
 
 func (p *proxy) AddService(svc *v1.Service) {
 	s := time.Now()
-	defer klog.V(5).Infof("AddService ran for: %d nanoseconds", time.Since(s))
+	defer klog.V(5).Infof("AddService for a service %s/%s ran for: %d nanoseconds", svc.Namespace, svc.Name, time.Since(s))
 	// Storing new service in the cache for later reference
 	p.cache.storeSvcInCache(svc)
 	klog.V(5).Infof("AddService for a service %s/%s", svc.Namespace, svc.Name)
@@ -237,7 +237,7 @@ func (p *proxy) deleteServicePort(svcPortName ServicePortName, servicePort *v1.S
 // TODO (sbezverk) Add update logic when Spec's fields example ExternalIPs, LoadbalancerIP etc are updated.
 func (p *proxy) UpdateService(svcOld, svcNew *v1.Service) {
 	s := time.Now()
-	defer klog.V(5).Infof("UpdateService ran for: %d nanoseconds", time.Since(s))
+	defer klog.V(5).Infof("UpdateService for a service %s/%s ran for: %d nanoseconds", svcNew.Namespace, svcNew.Name, time.Since(s))
 	klog.V(5).Infof("UpdateService for a service %s/%s", svcNew.Namespace, svcNew.Name)
 	klog.V(6).Infof("UpdateService for a service Spec: %+v Status: %+v", svcNew.Spec, svcNew.Status)
 	// Check if the version of Last Known Service's version matches with svcOld version
@@ -258,14 +258,17 @@ func (p *proxy) UpdateService(svcOld, svcNew *v1.Service) {
 		storedSvc, _ = p.cache.getLastKnownSvcFromCache(svcNew.Name, svcNew.Namespace)
 	}
 	// Step 1 is to detect all changes with ServicePorts
-	// TODO (sbezverk) Check for changes for ServicePort's NodePort.
 	p.processServicePortChanges(svcNew, storedSvc)
-	// Step 2 is to detect changes for External IPs; add new and remove old ones
+	// Step 2 Check for change of ClusterIP address
+	p.processClusterIPChanges(svcNew, storedSvc)
+	// Step 3 is to detect changes for External IPs; add new and remove old ones
 	p.processExternalIPChanges(svcNew, storedSvc)
-	// Step 3 is to detect changes for LoadBalancer IPs; add new and remove old ones
+	// Step 4 is to detect changes for LoadBalancer IPs; add new and remove old ones
 	p.processLoadBalancerIPChange(svcNew, storedSvc)
-	// Step 4 is to detect changes in Service Affinity
+	// Step 5 is to detect changes in Service Affinity
 	p.processAffinityChange(svcNew, storedSvc)
+
+	// TODO (sbezverk) Check for changes for ServicePort's NodePort.
 
 	// Update service in cache after applying all changes
 	p.cache.storeSvcInCache(svcNew)
@@ -273,7 +276,7 @@ func (p *proxy) UpdateService(svcOld, svcNew *v1.Service) {
 
 func (p *proxy) AddEndpoints(ep *v1.Endpoints) {
 	s := time.Now()
-	defer klog.V(5).Infof("AddEndpoints ran for: %d nanoseconds", time.Since(s))
+	defer klog.V(5).Infof("AddEndpoints for %s/%s ran for: %d nanoseconds", ep.Namespace, ep.Name, time.Since(s))
 	p.cache.storeEpInCache(ep)
 	klog.V(5).Infof("Add endpoint: %s/%s", ep.Namespace, ep.Name)
 	//	p.UpdateEndpoints(&v1.Endpoints{Subsets: []v1.EndpointSubset{}}, ep)
@@ -409,7 +412,7 @@ func (p *proxy) updateServiceChain(svcPortName ServicePortName, tableFamily util
 
 func (p *proxy) DeleteEndpoints(ep *v1.Endpoints) {
 	s := time.Now()
-	defer klog.V(5).Infof("AddService ran for: %d nanoseconds", time.Since(s))
+	defer klog.V(5).Infof("DeleteEndpoints for %s/%s ran for: %d nanoseconds", ep.Namespace, ep.Name, time.Since(s))
 	klog.V(5).Infof("Delete endpoint: %s/%s", ep.Namespace, ep.Name)
 	info, err := processEpSubsets(ep)
 	if err != nil {
@@ -524,7 +527,7 @@ func processEpSubsets(ep *v1.Endpoints) ([]epInfo, error) {
 
 func (p *proxy) UpdateEndpoints(epOld, epNew *v1.Endpoints) {
 	s := time.Now()
-	defer klog.V(5).Infof("UpdateEndpoints ran for: %d nanoseconds", time.Since(s))
+	defer klog.V(5).Infof("UpdateEndpoints for %s/%s ran for: %d nanoseconds", epNew.Namespace, epNew.Name, time.Since(s))
 	if epNew.Namespace == "" && epNew.Name == "" {
 		// When service gets deleted the endpoint controller triggers an update for an endpoint with no name or namespace
 		// ignoring it
@@ -682,45 +685,84 @@ func (p *proxy) processServicePortChanges(svcNew *v1.Service, storedSvc *v1.Serv
 
 }
 
+// processClusterIPChanges is called from the service Update handler, it checks for achange in
+// ClusterIP and re-program new entries for all ServicePorts.
+func (p *proxy) processClusterIPChanges(svcNew *v1.Service, storedSvc *v1.Service) {
+	if storedSvc.Spec.ClusterIP == svcNew.Spec.ClusterIP {
+		return
+	}
+	if svcNew.Spec.ClusterIP != "" {
+		addr := svcNew.Spec.ClusterIP
+		klog.V(5).Infof("detected a new ClusterIP %s", addr)
+		tableFamily := utilnftables.TableFamilyIPv4
+		if utilnet.IsIPv6String(addr) {
+			tableFamily = utilnftables.TableFamilyIPv6
+		}
+		for _, servicePort := range svcNew.Spec.Ports {
+			svcPortName := getSvcPortName(svcNew.Name, svcNew.Namespace, servicePort.Name, servicePort.Protocol)
+			svc := p.serviceMap[svcPortName].(*serviceInfo).BaseServiceInfo.String()
+			svcID := servicePortSvcID(svcPortName.String(), string(servicePort.Protocol), svc)
+			nftables.AddToSet(p.nfti, tableFamily, servicePort.Protocol, addr, uint16(servicePort.Port), nftables.K8sClusterIPSet, nftables.K8sSvcPrefix+svcID)
+			nftables.AddToSet(p.nfti, tableFamily, servicePort.Protocol, addr, uint16(servicePort.Port), nftables.K8sMarkMasqSet, nftables.K8sNATDoMarkMasq)
+		}
+	}
+	if storedSvc.Spec.ClusterIP != "" {
+		addr := storedSvc.Spec.ClusterIP
+		klog.V(5).Infof("detected deleted ClusterIP %s", addr)
+		tableFamily := utilnftables.TableFamilyIPv4
+		if utilnet.IsIPv6String(addr) {
+			tableFamily = utilnftables.TableFamilyIPv6
+		}
+		for _, servicePort := range svcNew.Spec.Ports {
+			svcPortName := getSvcPortName(svcNew.Name, svcNew.Namespace, servicePort.Name, servicePort.Protocol)
+			svcBaseInfoString := p.serviceMap[svcPortName].(*serviceInfo).BaseServiceInfo.String()
+			svcID := servicePortSvcID(svcPortName.String(), string(servicePort.Protocol), svcBaseInfoString)
+			nftables.RemoveFromSet(p.nfti, tableFamily, servicePort.Protocol, addr, uint16(servicePort.Port), nftables.K8sClusterIPSet, nftables.K8sSvcPrefix+svcID)
+			nftables.RemoveFromSet(p.nfti, tableFamily, servicePort.Protocol, addr, uint16(servicePort.Port), nftables.K8sMarkMasqSet, nftables.K8sNATDoMarkMasq)
+		}
+	}
+}
+
 // processExternalIPChanges is called from the service Update handler, it checks for any changes in
 // ExternalIPs and re-program new entries for all ServicePorts.
 func (p *proxy) processExternalIPChanges(svcNew *v1.Service, storedSvc *v1.Service) {
-	if !compareSliceOfString(storedSvc.Spec.ExternalIPs, svcNew.Spec.ExternalIPs) {
-		// Check for new ExternalIPs to add
-		for _, addr := range svcNew.Spec.ExternalIPs {
-			if isStringInSlice(addr, storedSvc.Spec.ExternalIPs) {
-				continue
-			}
-			klog.V(5).Infof("detected a new ExternalIP %s", addr)
-			tableFamily := utilnftables.TableFamilyIPv4
-			if utilnet.IsIPv6String(addr) {
-				tableFamily = utilnftables.TableFamilyIPv6
-			}
-			for _, servicePort := range svcNew.Spec.Ports {
-				svcPortName := getSvcPortName(svcNew.Name, svcNew.Namespace, servicePort.Name, servicePort.Protocol)
-				svc := p.serviceMap[svcPortName].(*serviceInfo).BaseServiceInfo.String()
-				svcID := servicePortSvcID(svcPortName.String(), string(servicePort.Protocol), svc)
-				nftables.AddToSet(p.nfti, tableFamily, servicePort.Protocol, addr, uint16(servicePort.Port), nftables.K8sExternalIPSet, nftables.K8sSvcPrefix+svcID)
-				nftables.AddToSet(p.nfti, tableFamily, servicePort.Protocol, addr, uint16(servicePort.Port), nftables.K8sMarkMasqSet, nftables.K8sNATDoMarkMasq)
-			}
+	if compareSliceOfString(storedSvc.Spec.ExternalIPs, svcNew.Spec.ExternalIPs) {
+		return
+	}
+	// Check for new ExternalIPs to add
+	for _, addr := range svcNew.Spec.ExternalIPs {
+		if isStringInSlice(addr, storedSvc.Spec.ExternalIPs) {
+			continue
 		}
-		// Check for ExternalIPs to delete
-		for _, addr := range storedSvc.Spec.ExternalIPs {
-			if isStringInSlice(addr, svcNew.Spec.ExternalIPs) {
-				continue
-			}
-			klog.V(5).Infof("detected deleted ExternalIP %s", addr)
-			tableFamily := utilnftables.TableFamilyIPv4
-			if utilnet.IsIPv6String(addr) {
-				tableFamily = utilnftables.TableFamilyIPv6
-			}
-			for _, servicePort := range svcNew.Spec.Ports {
-				svcPortName := getSvcPortName(svcNew.Name, svcNew.Namespace, servicePort.Name, servicePort.Protocol)
-				svcBaseInfoString := p.serviceMap[svcPortName].(*serviceInfo).BaseServiceInfo.String()
-				svcID := servicePortSvcID(svcPortName.String(), string(servicePort.Protocol), svcBaseInfoString)
-				nftables.RemoveFromSet(p.nfti, tableFamily, servicePort.Protocol, addr, uint16(servicePort.Port), nftables.K8sExternalIPSet, nftables.K8sSvcPrefix+svcID)
-				nftables.RemoveFromSet(p.nfti, tableFamily, servicePort.Protocol, addr, uint16(servicePort.Port), nftables.K8sMarkMasqSet, nftables.K8sNATDoMarkMasq)
-			}
+		klog.V(5).Infof("detected a new ExternalIP %s", addr)
+		tableFamily := utilnftables.TableFamilyIPv4
+		if utilnet.IsIPv6String(addr) {
+			tableFamily = utilnftables.TableFamilyIPv6
+		}
+		for _, servicePort := range svcNew.Spec.Ports {
+			svcPortName := getSvcPortName(svcNew.Name, svcNew.Namespace, servicePort.Name, servicePort.Protocol)
+			svc := p.serviceMap[svcPortName].(*serviceInfo).BaseServiceInfo.String()
+			svcID := servicePortSvcID(svcPortName.String(), string(servicePort.Protocol), svc)
+			nftables.AddToSet(p.nfti, tableFamily, servicePort.Protocol, addr, uint16(servicePort.Port), nftables.K8sExternalIPSet, nftables.K8sSvcPrefix+svcID)
+			nftables.AddToSet(p.nfti, tableFamily, servicePort.Protocol, addr, uint16(servicePort.Port), nftables.K8sMarkMasqSet, nftables.K8sNATDoMarkMasq)
+		}
+	}
+	// Check for ExternalIPs to delete
+	for _, addr := range storedSvc.Spec.ExternalIPs {
+		if isStringInSlice(addr, svcNew.Spec.ExternalIPs) {
+			continue
+		}
+		klog.V(5).Infof("detected deleted ExternalIP %s", addr)
+		tableFamily := utilnftables.TableFamilyIPv4
+		if utilnet.IsIPv6String(addr) {
+			tableFamily = utilnftables.TableFamilyIPv6
+		}
+		for _, servicePort := range svcNew.Spec.Ports {
+			svcPortName := getSvcPortName(svcNew.Name, svcNew.Namespace, servicePort.Name, servicePort.Protocol)
+			svcBaseInfoString := p.serviceMap[svcPortName].(*serviceInfo).BaseServiceInfo.String()
+			svcID := servicePortSvcID(svcPortName.String(), string(servicePort.Protocol), svcBaseInfoString)
+			nftables.RemoveFromSet(p.nfti, tableFamily, servicePort.Protocol, addr, uint16(servicePort.Port), nftables.K8sExternalIPSet, nftables.K8sSvcPrefix+svcID)
+			nftables.RemoveFromSet(p.nfti, tableFamily, servicePort.Protocol, addr, uint16(servicePort.Port), nftables.K8sMarkMasqSet, nftables.K8sNATDoMarkMasq)
 		}
 	}
 }
@@ -729,44 +771,45 @@ func (p *proxy) processExternalIPChanges(svcNew *v1.Service, storedSvc *v1.Servi
 // LoadBalancer's IPs and re-program new entries for all ServicePorts.
 func (p *proxy) processLoadBalancerIPChange(svcNew *v1.Service, storedSvc *v1.Service) {
 	// Check if new and stored service status is equal or not, if equal no processing required
-	if !isIngressEqual(svcNew.Status.LoadBalancer.Ingress, storedSvc.Status.LoadBalancer.Ingress) {
-		// Check new Service Loadbalancer status for entries missing in stored Service
-		for _, lbingress := range svcNew.Status.LoadBalancer.Ingress {
-			// TODO figure out what to do if addr.Host is used
-			if _, found := isAddressInIngress(storedSvc.Status.LoadBalancer.Ingress, lbingress.IP); !found {
-				klog.V(5).Infof("adding new LoadBalancerIP: %s", lbingress.IP)
-				addr := lbingress.IP
-				tableFamily := utilnftables.TableFamilyIPv4
-				if utilnet.IsIPv6String(addr) {
-					tableFamily = utilnftables.TableFamilyIPv6
-				}
-				for _, servicePort := range svcNew.Spec.Ports {
-					svcPortName := getSvcPortName(svcNew.Name, svcNew.Namespace, servicePort.Name, servicePort.Protocol)
-					svc := p.serviceMap[svcPortName].(*serviceInfo).BaseServiceInfo.String()
-					svcID := servicePortSvcID(svcPortName.String(), string(servicePort.Protocol), svc)
-					nftables.AddToSet(p.nfti, tableFamily, servicePort.Protocol, addr, uint16(servicePort.Port), nftables.K8sLoadbalancerIPSet, nftables.K8sSvcPrefix+svcID)
-					nftables.AddToSet(p.nfti, tableFamily, servicePort.Protocol, addr, uint16(servicePort.Port), nftables.K8sMarkMasqSet, nftables.K8sNATDoMarkMasq)
-				}
+	if isIngressEqual(svcNew.Status.LoadBalancer.Ingress, storedSvc.Status.LoadBalancer.Ingress) {
+		return
+	}
+	// Check new Service Loadbalancer status for entries missing in stored Service
+	for _, lbingress := range svcNew.Status.LoadBalancer.Ingress {
+		// TODO figure out what to do if addr.Host is used
+		if _, found := isAddressInIngress(storedSvc.Status.LoadBalancer.Ingress, lbingress.IP); !found {
+			klog.V(5).Infof("adding new LoadBalancerIP: %s", lbingress.IP)
+			addr := lbingress.IP
+			tableFamily := utilnftables.TableFamilyIPv4
+			if utilnet.IsIPv6String(addr) {
+				tableFamily = utilnftables.TableFamilyIPv6
+			}
+			for _, servicePort := range svcNew.Spec.Ports {
+				svcPortName := getSvcPortName(svcNew.Name, svcNew.Namespace, servicePort.Name, servicePort.Protocol)
+				svc := p.serviceMap[svcPortName].(*serviceInfo).BaseServiceInfo.String()
+				svcID := servicePortSvcID(svcPortName.String(), string(servicePort.Protocol), svc)
+				nftables.AddToSet(p.nfti, tableFamily, servicePort.Protocol, addr, uint16(servicePort.Port), nftables.K8sLoadbalancerIPSet, nftables.K8sSvcPrefix+svcID)
+				nftables.AddToSet(p.nfti, tableFamily, servicePort.Protocol, addr, uint16(servicePort.Port), nftables.K8sMarkMasqSet, nftables.K8sNATDoMarkMasq)
 			}
 		}
-		// Check stored Service Loadbalancer status for entries missing in a new Service, if not found
-		// it indicates removal of LoadBalancer IP
-		for _, lbingress := range storedSvc.Status.LoadBalancer.Ingress {
-			// TODO figure out what to do if addr.Host is used
-			if _, found := isAddressInIngress(svcNew.Status.LoadBalancer.Ingress, lbingress.IP); !found {
-				klog.V(5).Infof("removing old LoadBalancerIP: %s", lbingress.IP)
-				addr := lbingress.IP
-				tableFamily := utilnftables.TableFamilyIPv4
-				if utilnet.IsIPv6String(addr) {
-					tableFamily = utilnftables.TableFamilyIPv6
-				}
-				for _, servicePort := range svcNew.Spec.Ports {
-					svcPortName := getSvcPortName(svcNew.Name, svcNew.Namespace, servicePort.Name, servicePort.Protocol)
-					svc := p.serviceMap[svcPortName].(*serviceInfo).BaseServiceInfo.String()
-					svcID := servicePortSvcID(svcPortName.String(), string(servicePort.Protocol), svc)
-					nftables.RemoveFromSet(p.nfti, tableFamily, servicePort.Protocol, addr, uint16(servicePort.Port), nftables.K8sLoadbalancerIPSet, nftables.K8sSvcPrefix+svcID)
-					nftables.RemoveFromSet(p.nfti, tableFamily, servicePort.Protocol, addr, uint16(servicePort.Port), nftables.K8sMarkMasqSet, nftables.K8sNATDoMarkMasq)
-				}
+	}
+	// Check stored Service Loadbalancer status for entries missing in a new Service, if not found
+	// it indicates removal of LoadBalancer IP
+	for _, lbingress := range storedSvc.Status.LoadBalancer.Ingress {
+		// TODO figure out what to do if addr.Host is used
+		if _, found := isAddressInIngress(svcNew.Status.LoadBalancer.Ingress, lbingress.IP); !found {
+			klog.V(5).Infof("removing old LoadBalancerIP: %s", lbingress.IP)
+			addr := lbingress.IP
+			tableFamily := utilnftables.TableFamilyIPv4
+			if utilnet.IsIPv6String(addr) {
+				tableFamily = utilnftables.TableFamilyIPv6
+			}
+			for _, servicePort := range svcNew.Spec.Ports {
+				svcPortName := getSvcPortName(svcNew.Name, svcNew.Namespace, servicePort.Name, servicePort.Protocol)
+				svc := p.serviceMap[svcPortName].(*serviceInfo).BaseServiceInfo.String()
+				svcID := servicePortSvcID(svcPortName.String(), string(servicePort.Protocol), svc)
+				nftables.RemoveFromSet(p.nfti, tableFamily, servicePort.Protocol, addr, uint16(servicePort.Port), nftables.K8sLoadbalancerIPSet, nftables.K8sSvcPrefix+svcID)
+				nftables.RemoveFromSet(p.nfti, tableFamily, servicePort.Protocol, addr, uint16(servicePort.Port), nftables.K8sMarkMasqSet, nftables.K8sNATDoMarkMasq)
 			}
 		}
 	}

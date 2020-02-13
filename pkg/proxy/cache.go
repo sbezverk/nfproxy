@@ -48,7 +48,6 @@ func (c *cache) getCachedSvcVersion(name, namespace string) (string, error) {
 
 // getLastKnownSvcFromCache return pointer to the latest known/stored instance of the service
 func (c *cache) getLastKnownSvcFromCache(name, namespace string) (*v1.Service, error) {
-	klog.V(6).Infof("retrieving service %s/%s from the cache", namespace, name)
 	c.Lock()
 	defer c.Unlock()
 	s, ok := c.svcCache[types.NamespacedName{Name: name, Namespace: namespace}]
@@ -56,29 +55,26 @@ func (c *cache) getLastKnownSvcFromCache(name, namespace string) (*v1.Service, e
 		return nil, fmt.Errorf("service %s/%s not found in the cache", namespace, name)
 	}
 
-	return s.DeepCopy(), nil
+	return s, nil
 }
 
 // storeSvcInCache stores in the cache instance of a service, if cache does not have already
 // service, it will be added, if it already has, iy will be replaced with the one passed
 // as a parameter.
 func (c *cache) storeSvcInCache(s *v1.Service) {
-	klog.V(6).Infof("storing service %s/%s in the cache", s.ObjectMeta.Namespace, s.ObjectMeta.Name)
 	c.Lock()
 	defer c.Unlock()
-	if _, ok := c.svcCache[types.NamespacedName{Name: s.ObjectMeta.Name, Namespace: s.ObjectMeta.Namespace}]; ok {
-		delete(c.svcCache, types.NamespacedName{Name: s.ObjectMeta.Name, Namespace: s.ObjectMeta.Namespace})
-	}
 	c.svcCache[types.NamespacedName{Name: s.ObjectMeta.Name, Namespace: s.ObjectMeta.Namespace}] = s.DeepCopy()
 }
 
 // removeSvcFromCache removes stored service from cache.
 func (c *cache) removeSvcFromCache(name, namespace string) {
-	klog.V(6).Infof("removing service %s/%s from the cache", namespace, name)
 	c.Lock()
 	defer c.Unlock()
 	if _, ok := c.svcCache[types.NamespacedName{Name: name, Namespace: namespace}]; ok {
 		delete(c.svcCache, types.NamespacedName{Name: name, Namespace: namespace})
+	} else {
+		klog.Warningf("service %s/%s not found in the cache", namespace, name)
 	}
 }
 
@@ -98,12 +94,12 @@ func (c *cache) getCachedEpVersion(name, namespace string) (string, error) {
 func (c *cache) getLastKnownEpFromCache(name, namespace string) (*v1.Endpoints, error) {
 	c.Lock()
 	defer c.Unlock()
-	s, ok := c.epCache[types.NamespacedName{Name: name, Namespace: namespace}]
+	ep, ok := c.epCache[types.NamespacedName{Name: name, Namespace: namespace}]
 	if !ok {
 		return nil, fmt.Errorf("endpoint %s/%s not found in the cache", namespace, name)
 	}
 
-	return s, nil
+	return ep, nil
 }
 
 // storeEpInCache stores in the cache instance of a endpoint, if cache does not have already
@@ -112,9 +108,6 @@ func (c *cache) getLastKnownEpFromCache(name, namespace string) (*v1.Endpoints, 
 func (c *cache) storeEpInCache(ep *v1.Endpoints) {
 	c.Lock()
 	defer c.Unlock()
-	if _, ok := c.epCache[types.NamespacedName{Name: ep.ObjectMeta.Name, Namespace: ep.ObjectMeta.Namespace}]; ok {
-		delete(c.epCache, types.NamespacedName{Name: ep.ObjectMeta.Name, Namespace: ep.ObjectMeta.Namespace})
-	}
 	c.epCache[types.NamespacedName{Name: ep.ObjectMeta.Name, Namespace: ep.ObjectMeta.Namespace}] = ep.DeepCopy()
 }
 
@@ -122,7 +115,9 @@ func (c *cache) storeEpInCache(ep *v1.Endpoints) {
 func (c *cache) removeEpFromCache(name, namespace string) {
 	c.Lock()
 	defer c.Unlock()
-	if _, ok := c.svcCache[types.NamespacedName{Name: name, Namespace: namespace}]; ok {
-		delete(c.svcCache, types.NamespacedName{Name: name, Namespace: namespace})
+	if _, ok := c.epCache[types.NamespacedName{Name: name, Namespace: namespace}]; ok {
+		delete(c.epCache, types.NamespacedName{Name: name, Namespace: namespace})
+	} else {
+		klog.Warningf("endpoint %s/%s not found in the cache", namespace, name)
 	}
 }
