@@ -131,6 +131,13 @@ func isPortInSubset(subsets []v1.EndpointSubset, port *v1.EndpointPort, addr *v1
 				}
 			}
 		}
+		for _, subsetAddr := range s.NotReadyAddresses {
+			for _, p := range s.Ports {
+				if p.Name == port.Name && p.Port == port.Port && p.Protocol == port.Protocol && strings.Compare(subsetAddr.IP, addr.IP) == 0 {
+					return true
+				}
+			}
+		}
 	}
 	return false
 }

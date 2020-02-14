@@ -53,9 +53,9 @@ func (c *controller) handleAddService(obj interface{}) {
 		return
 	}
 	klog.V(5).Infof("service add event for %s/%s", svc.ObjectMeta.Namespace, svc.ObjectMeta.Name)
-	//if svc.Name == "app2" {
+	//	if svc.Name == "app2" {
 	c.proxy.AddService(svc)
-	//}
+	//	}
 }
 
 func (c *controller) handleUpdateService(oldObj, newObj interface{}) {
@@ -73,9 +73,9 @@ func (c *controller) handleUpdateService(oldObj, newObj interface{}) {
 		return
 	}
 	klog.V(5).Infof("service update event for %s/%s", svcNew.ObjectMeta.Namespace, svcNew.ObjectMeta.Name)
-	//if svcNew.Name == "app2" || svcOld.Name == "app2" {
+	//	if svcNew.Name == "app2" || svcOld.Name == "app2" {
 	c.proxy.UpdateService(svcOld, svcNew)
-	//}
+	//	}
 }
 
 func (c *controller) handleDeleteService(obj interface{}) {
@@ -92,9 +92,9 @@ func (c *controller) handleDeleteService(obj interface{}) {
 		}
 	}
 	klog.V(5).Infof("service delete event for %s/%s", svc.ObjectMeta.Namespace, svc.ObjectMeta.Name)
-	//if svc.Name == "app2" {
+	//	if svc.Name == "app2" {
 	c.proxy.DeleteService(svc)
-	//}
+	//	}
 }
 
 func (c *controller) handleAddEndpoint(obj interface{}) {
@@ -104,9 +104,9 @@ func (c *controller) handleAddEndpoint(obj interface{}) {
 		return
 	}
 	klog.V(5).Infof("endpoint add event for %s/%s", ep.ObjectMeta.Namespace, ep.ObjectMeta.Name)
-	//if ep.Name == "app2" {
+	//	if ep.Name == "app2" {
 	c.proxy.AddEndpoints(ep)
-	//}
+	//	}
 }
 
 func (c *controller) handleUpdateEndpoint(oldObj, newObj interface{}) {
@@ -127,10 +127,10 @@ func (c *controller) handleUpdateEndpoint(oldObj, newObj interface{}) {
 	if epNew.ObjectMeta.Name == "kube-controller-manager" || epNew.ObjectMeta.Name == "kube-scheduler" {
 		return
 	}
-	klog.V(5).Infof("endpoint update event for %s/%s Subsets old: %+v Subsets new: %+v", epNew.ObjectMeta.Namespace, epNew.ObjectMeta.Name, epOld.Subsets, epNew.Subsets)
-	//if epOld.Name == "app2" || epNew.Name == "app2" {
+	klog.V(6).Infof("endpoint update event for %s/%s Subsets old: %+v Subsets new: %+v", epNew.ObjectMeta.Namespace, epNew.ObjectMeta.Name, epOld.Subsets, epNew.Subsets)
+	//	if epOld.Name == "app2" || epNew.Name == "app2" {
 	c.proxy.UpdateEndpoints(epOld, epNew)
-	//}
+	//	}
 }
 
 func (c *controller) handleDeleteEndpoint(obj interface{}) {
@@ -147,9 +147,9 @@ func (c *controller) handleDeleteEndpoint(obj interface{}) {
 		}
 	}
 	klog.V(5).Infof("endpoint delete event for %s/%s", ep.ObjectMeta.Namespace, ep.ObjectMeta.Name)
-	//if ep.Name == "app2" {
+	//	if ep.Name == "app2" {
 	c.proxy.DeleteEndpoints(ep)
-	//}
+	//	}
 }
 
 func (c *controller) Start(stopCh <-chan struct{}) error {

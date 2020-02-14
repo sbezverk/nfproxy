@@ -202,7 +202,7 @@ func AddEndpointRules(nfti *NFTInterface, tableFamily nftables.TableFamily, chai
 	return id, nil
 }
 
-// AddEndpointUpdateRules creates an ednpoint chain and programs Update rule, this rules will update
+// AddEndpointUpdateRule creates an ednpoint chain and programs Update rule, this rules will update
 // (refresh) endpoint entry in a Service Affinity map.
 func AddEndpointUpdateRule(nfti *NFTInterface, tableFamily nftables.TableFamily, chain string, index int, svcID string, timeout int) ([]uint64, error) {
 	ci := ciForTableFamily(nfti, tableFamily)
@@ -514,48 +514,102 @@ func DeleteServiceChains(nfti *NFTInterface, tableFamily nftables.TableFamily, s
 
 // ProgramServiceEndpoints programms endpoints to the service chain, if multiple endpoint exists, endpoint rules
 // will be programmed for loadbalancing.
-func ProgramServiceEndpoints(nfti *NFTInterface, tableFamily nftables.TableFamily, chain string, epchains []string, ruleID []uint64) ([]uint64, error) {
-	var err error
-	var id uint64
+func ProgramServiceEndpoints(nfti *NFTInterface, tableFamily nftables.TableFamily, svcID string, epchains []*EPRule, ruleID []uint64, withAffinity bool) ([]uint64, error) {
+	var id []uint64
 
+	chain := K8sSvcPrefix + svcID
 	ci := ciForTableFamily(nfti, tableFamily)
-
-	loadbalanceAction, err := nftableslib.SetLoadbalance(epchains, unix.NFT_JUMP, unix.NFT_NG_RANDOM)
+	// Adding first rule of Service Port Chain, Counter
+	ri, err := ci.Chains().Chain(chain)
+	if err != nil {
+		return nil, fmt.Errorf("fail to get rules interface for service chain %s with error: %+v", chain, err)
+	}
+	rules := []nftableslib.Rule{
+		nftableslib.Rule{
+			Counter: &nftableslib.Counter{},
+		},
+	}
+	// If Service Port has Session Affinity then MatchAct rule must be inserted before normal load balancing rule.
+	if withAffinity {
+		si := nfti.SIv4
+		if tableFamily == nftables.TableFamilyIPv6 {
+			si = nfti.SIv6
+		}
+		// Getting info for Service Port's Affinity map
+		s, err := si.Sets().GetSetByName(K8sAffinityMap + svcID)
+		if err != nil {
+			return nil, err
+		}
+		act := make(map[int]*nftableslib.RuleAction, len(epchains))
+		// Preparing elements for Act.
+		for i := 0; i < len(epchains); i++ {
+			// Each Endpoint has an Index allocated at the time when it gets created, this index must be a key
+			// in Action vmap.
+			act[epchains[i].EpIndex] = setActionVerdict(unix.NFT_JUMP, epchains[i].Chain)
+		}
+		rules = append(rules, nftableslib.Rule{
+			MatchAct: &nftableslib.MatchAct{
+				Match: nftableslib.MatchTypeL3Src,
+				MatchRef: &nftableslib.SetRef{
+					Name:  s.Name,
+					ID:    s.ID,
+					IsMap: true,
+				},
+				ActElement: act,
+			},
+		})
+	}
+	// Start of a normal rule preparation process
+	epChain := []string{}
+	for i := 0; i < len(epchains); i++ {
+		epChain = append(epChain, epchains[i].Chain)
+	}
+	loadbalanceAction, err := nftableslib.SetLoadbalance(epChain, unix.NFT_JUMP, unix.NFT_NG_RANDOM)
 	if err != nil {
 		return nil, err
 	}
-	rule := nftableslib.Rule{
+	rules = append(rules, nftableslib.Rule{
 		Action: loadbalanceAction,
-	}
-	ri, err := ci.Chains().Chain(chain)
-	if err != nil {
-		return nil, fmt.Errorf("fail to program endpoints rules for service chain %s with error: %+v", chain, err)
-	}
+	})
 	if len(ruleID) == 0 {
 		// Since ruleID len is 0, it is the first time when the service has endpoints' rule programmed
-		_, err = ri.Rules().CreateImm(&nftableslib.Rule{
-			Counter: &nftableslib.Counter{},
-		})
-		if err != nil {
-			return nil, fmt.Errorf("fail to program endpoints rules for service chain %s with error: %+v", chain, err)
-		}
-		id, err = ri.Rules().CreateImm(&rule)
+		id, err = programChainRules(ci, chain, rules, 0)
 		if err != nil {
 			return nil, fmt.Errorf("fail to program endpoints rules for service chain %s with error: %+v", chain, err)
 		}
 	} else {
+		// Preserving existing rules
+		id = ruleID
+		// In normal (no Session Affinity) case, Load Balancing rule's handle would be stored at position 1 of RuleID slice,
+		// right after Counter rule id which is always at position 0.
+		loadBalanceRuleIndex := 1
 		// Service has previously progrmmed endpoint rule, need to Insert a new rule and then delete the old one
-		rule.Position = int(ruleID[0])
-		id, err = ri.Rules().InsertImm(&rule)
+		if withAffinity {
+			// if withAffinity is true then rule index 1 will always carry MatchAct rule which needs to be replaced
+			rules[1].Position = int(ruleID[1])
+			rid, err := ri.Rules().InsertImm(&rules[1])
+			if err != nil {
+				return nil, fmt.Errorf("fail to program endpoints rules for service chain %s with error: %+v", chain, err)
+			}
+			if err := ri.Rules().DeleteImm(ruleID[1]); err != nil {
+				klog.Errorf("failed to delete old endpoints rule for service chain %s with error: %+v", chain, err)
+			}
+			id[1] = rid
+			// Since it is Session Affinity case, then Load Balancing rule handle position would be moved to 2.
+			loadBalanceRuleIndex++
+		}
+		rules[loadBalanceRuleIndex].Position = int(ruleID[loadBalanceRuleIndex])
+		rid, err := ri.Rules().InsertImm(&rules[loadBalanceRuleIndex])
 		if err != nil {
 			return nil, fmt.Errorf("fail to program endpoints rules for service chain %s with error: %+v", chain, err)
 		}
-		if err := ri.Rules().DeleteImm(ruleID[0]); err != nil {
+		if err := ri.Rules().DeleteImm(ruleID[loadBalanceRuleIndex]); err != nil {
 			klog.Errorf("failed to delete old endpoints rule for service chain %s with error: %+v", chain, err)
 		}
+		id[loadBalanceRuleIndex] = rid
 	}
 
-	return []uint64{id}, nil
+	return id, nil
 }
 
 func ciForTableFamily(nfti *NFTInterface, tableFamily nftables.TableFamily) nftableslib.ChainsInterface {
@@ -646,4 +700,55 @@ func DeleteServiceAffinityMap(nfti *NFTInterface, tableFamily nftables.TableFami
 	}
 
 	return nil
+}
+
+// AddServiceMatchActRule programms Service Port's MatchAct rule. This rule is inserted as a second rule (after the counter rule)
+// in order to process packet based on the content of Service Port's Affinity map. If the map has an entry for a specific source,
+// then traffic will be send to the same endpoint chain instead of round robin load balancing between available endpoints.
+func AddServiceMatchActRule(nfti *NFTInterface, tableFamily nftables.TableFamily, svcID string, epchains []*EPRule, ruleID uint64) ([]uint64, error) {
+	var err error
+
+	chain := K8sSvcPrefix + svcID
+	ci := ciForTableFamily(nfti, tableFamily)
+	// Adding first rule of Service Port Chain, Counter
+	ri, err := ci.Chains().Chain(chain)
+	if err != nil {
+		return nil, fmt.Errorf("fail to get rules interface for service chain %s with error: %+v", chain, err)
+	}
+	si := nfti.SIv4
+	if tableFamily == nftables.TableFamilyIPv6 {
+		si = nfti.SIv6
+	}
+	// Getting info for Service Port's Affinity map
+	s, err := si.Sets().GetSetByName(K8sAffinityMap + svcID)
+	if err != nil {
+		return nil, err
+	}
+	act := make(map[int]*nftableslib.RuleAction, len(epchains))
+	// Preparing elements for Act.
+	for i := 0; i < len(epchains); i++ {
+		// Each Endpoint has an Index allocated at the time when it gets created, this index must be a key
+		// in Action vmap.
+		act[epchains[i].EpIndex] = setActionVerdict(unix.NFT_JUMP, epchains[i].Chain)
+	}
+	rules := nftableslib.Rule{
+		MatchAct: &nftableslib.MatchAct{
+			Match: nftableslib.MatchTypeL3Src,
+			MatchRef: &nftableslib.SetRef{
+				Name:  s.Name,
+				ID:    s.ID,
+				IsMap: true,
+			},
+			ActElement: act,
+		},
+	}
+
+	// Inserting MatchAct rule right after the first rule.
+	rules.Position = int(ruleID)
+	rid, err := ri.Rules().InsertImm(&rules)
+	if err != nil {
+		return nil, fmt.Errorf("fail to program MatchAct rule for service chain %s with error: %+v", chain, err)
+	}
+
+	return []uint64{rid}, nil
 }
