@@ -442,6 +442,8 @@ github.com/sbezverk/nftableslib v0.0.0-20200210134606-01073a94a441 h1:6sgouK0ioI
 github.com/sbezverk/nftableslib v0.0.0-20200210134606-01073a94a441/go.mod h1:oP6rAIy2AGF+GO8NKuxg5Dk5tG5QEjWtZOERDTxRedc=
 github.com/sbezverk/nftableslib v0.0.0-20200211022912-1d01f34968b0 h1:PVefqGbcReg50I0GyTCdNS9Lv43OEoOHBPA6h1IPx9A=
 github.com/sbezverk/nftableslib v0.0.0-20200211022912-1d01f34968b0/go.mod h1:oP6rAIy2AGF+GO8NKuxg5Dk5tG5QEjWtZOERDTxRedc=
+github.com/sbezverk/nftableslib v0.0.0-20200214102516-8168bdb2f583 h1:AEadvzEWOGLU2WEjK3EYaN/T6iuQ+2U6taQdF7DVTug=
+github.com/sbezverk/nftableslib v0.0.0-20200214102516-8168bdb2f583/go.mod h1:oP6rAIy2AGF+GO8NKuxg5Dk5tG5QEjWtZOERDTxRedc=
 github.com/sbezverk/nftableslib/e2e/setenv v0.0.0-20191009154549-4fe065fe4e96/go.mod h1:eg/8FSK3bdB2DJRB5Cs8oIXtqYtF/KbMRwyuaZ13SG4=
 github.com/sbezverk/nftableslib/e2e/setenv v0.0.0-20191010164456-029e0d78cdb1/go.mod h1:Q7cQRSoGvFdscKripABhD9LwzMPI7nyH/W19KStrNEE=
 github.com/seccomp/libseccomp-golang v0.9.1/go.mod h1:GbW5+tmTXfcxTToHLXlScSlAvWlF4P2Ca7zGrPiEpWo=
