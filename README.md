@@ -97,29 +97,18 @@ The command line to run tests is the following:
 The current status is the following:
 
 ```
-[Fail] [sig-network] Services [It] should be able to switch session affinity for service with type clusterIP [LinuxOnly] [Flaky] 
-test/e2e/network/service.go:193
+Summarizing 2 Failures:
 
 [Fail] [sig-network] Services [It] should handle load balancer cleanup finalizer for service [Slow] 
 test/e2e/framework/service/wait.go:78
 
-[Fail] [sig-network] Services [It] should be able to switch session affinity for LoadBalancer service with ESIPP on [Slow] [DisabledForLargeClusters] [LinuxOnly] 
-test/e2e/network/util.go:40
-
-[Fail] [sig-network] Services [It] should be able to switch session affinity for NodePort service [LinuxOnly] [Flaky] 
-test/e2e/network/service.go:193
-
 [Fail] [sig-network] EndpointSlice [Feature:EndpointSlice] version v1 [It] should create Endpoints and EndpointSlices for Pods matching a Service 
 test/e2e/network/endpointslice.go:358
 
-[Fail] [sig-network] Services [It] should be able to switch session affinity for LoadBalancer service with ESIPP off [Slow] [DisabledForLargeClusters] [LinuxOnly] 
-test/e2e/network/service.go:193
+Ran 27 of 4846 Specs in 2140.038 seconds
+FAIL! -- 25 Passed | 2 Failed | 0 Pending | 4819 Skipped
+--- FAIL: TestE2E (2140.06s)
 
-[Fail] [sig-network] Services [It] should have session affinity work for LoadBalancer service with ESIPP off [Slow] [DisabledForLargeClusters] [LinuxOnly] 
-test/e2e/network/util.go:40
-
-Ran 27 of 4846 Specs in 6224.795 seconds
-FAIL! -- 20 Passed | 7 Failed | 0 Pending | 4819 Skipped
 ```
 
 The effort is underway to make nfproxy to pass all e2e tests. Help is welcome and much appreciated.

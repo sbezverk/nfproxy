@@ -220,6 +220,13 @@ func (p *proxy) deleteServicePort(svcPortName ServicePortName, servicePort *v1.S
 		}
 	}
 	if baseInfo.svcnft.WithAffinity {
+		if baseInfo.svcnft.WithEndpoints {
+			eps, _ := p.endpointsMap[svcPortName]
+			if err := p.deleteAffinityEndpoint(eps, tableFamily); err != nil {
+				klog.Errorf("failed to delete endpoint affinity update rule for port %s with error: %+v", svcPortName.String(), err)
+				return
+			}
+		}
 		if err := nftables.DeleteServiceAffinityMap(p.nfti, tableFamily, baseInfo.svcnft.ServiceID); err != nil {
 			klog.Errorf("failed to delete service affinity map for port %s with error: %+v", svcPortName.String(), err)
 			return
@@ -386,11 +393,10 @@ func (p *proxy) updateServiceChain(svcPortName ServicePortName, tableFamily util
 	}
 	// Programming rules for existing endpoints
 	epsChains := p.getServicePortEndpointChains(svcPortName, tableFamily)
-	cn := nftables.K8sSvcPrefix + entry.svcnft.ServiceID
-	svcRules := entry.svcnft.Chains[tableFamily].Chain[cn]
+	svcRules := entry.svcnft.Chains[tableFamily].Chain[nftables.K8sSvcPrefix+entry.svcnft.ServiceID]
 	// Check if the service still has any backends
 	if len(epsChains) != 0 {
-		rules, err := nftables.ProgramServiceEndpoints(p.nfti, tableFamily, cn, epsChains, svcRules.RuleID)
+		rules, err := nftables.ProgramServiceEndpoints(p.nfti, tableFamily, entry.svcnft.ServiceID, epsChains, svcRules.RuleID, entry.svcnft.WithAffinity)
 		if err != nil {
 			klog.Errorf("failed to program endpoints rules for service %s with error: %+v", svcPortName.String(), err)
 			return err
@@ -400,7 +406,7 @@ func (p *proxy) updateServiceChain(svcPortName ServicePortName, tableFamily util
 		svcRules.RuleID = rules
 	} else {
 		// Service has no endpoints left needs to remove the rule if any
-		if err := nftables.DeleteServiceRules(p.nfti, tableFamily, cn, svcRules.RuleID); err != nil {
+		if err := nftables.DeleteServiceRules(p.nfti, tableFamily, nftables.K8sSvcPrefix+entry.svcnft.ServiceID, svcRules.RuleID); err != nil {
 			klog.Errorf("failed to remove rule for service %s with error: %+v", svcPortName.String(), err)
 			return err
 		}
@@ -586,18 +592,18 @@ func (p *proxy) UpdateEndpoints(epOld, epNew *v1.Endpoints) {
 }
 
 // getServicePortEndpointChains return a slice of strings containing a specific ServicePortName all endpoints chains
-func (p *proxy) getServicePortEndpointChains(svcPortName ServicePortName, tableFamily utilnftables.TableFamily) []string {
-	chains := []string{}
+func (p *proxy) getServicePortEndpointChains(svcPortName ServicePortName, tableFamily utilnftables.TableFamily) []*nftables.EPRule {
+	servicePortEndpoints := []*nftables.EPRule{}
 	for _, ep := range p.endpointsMap[svcPortName] {
 		epBase, ok := ep.(*endpointsInfo)
 		if !ok {
 			// Not recognize, skipping it
 			continue
 		}
-		chains = append(chains, epBase.epnft.Rule[tableFamily].Chain)
+		servicePortEndpoints = append(servicePortEndpoints, epBase.epnft.Rule[tableFamily])
 	}
 
-	return chains
+	return servicePortEndpoints
 }
 
 // processServicePortChanges is called from the service Update handler, it checks for any changes in
@@ -824,51 +830,86 @@ func (p *proxy) processAffinityChange(svcNew *v1.Service, storedSvc *v1.Service)
 	klog.V(5).Infof("Change in Service Affinity of service %s/%s detected", svcNew.ObjectMeta.Namespace, svcNew.ObjectMeta.Name)
 	_, tableFamily := getIPFamily(svcNew.Spec.ClusterIP)
 	if svcNew.Spec.SessionAffinity == v1.ServiceAffinityClientIP {
+		p.mu.Lock()
+		defer p.mu.Unlock()
 		klog.V(6).Infof("Adding Service Affinity to Service Ports")
 		for _, servicePort := range svcNew.Spec.Ports {
 			svcPortName := getSvcPortName(svcNew.Name, svcNew.Namespace, servicePort.Name, servicePort.Protocol)
-			svcID := p.serviceMap[svcPortName].(*serviceInfo).BaseServiceInfo.svcnft.ServiceID
-			maxAgeSeconds := p.serviceMap[svcPortName].(*serviceInfo).BaseServiceInfo.svcnft.MaxAgeSeconds
+			svc := p.serviceMap[svcPortName].(*serviceInfo).BaseServiceInfo.svcnft
+			svcID := svc.ServiceID
+			chain := nftables.K8sSvcPrefix + svcID
+			maxAgeSeconds := svc.MaxAgeSeconds
 			klog.V(6).Infof("Adding service affinity map for port: %s service ID: %s timeout: %d", svcPortName.String(), svcID, maxAgeSeconds)
 			if err := nftables.AddServiceAffinityMap(p.nfti, tableFamily, svcID, maxAgeSeconds); err != nil {
 				klog.Errorf("failed to add service affinity map for port %s with error: %+v", svcPortName.String(), err)
-				return
-			}
-			// Since ServicePort now has Service Affinity configuration, need to check if it has already Endpoints and if it is the case
-			// each Endpoint needs "Update" rule to be inserted as a very first rule.
-			if !p.serviceMap[svcPortName].(*serviceInfo).BaseServiceInfo.svcnft.WithEndpoints {
 				continue
 			}
-			p.mu.Lock()
+			// Adding MatchAct rule to start using Service Port's Affinity map. This rule must be inserted before normal Load Balancing rule.
+			id := svc.Chains[tableFamily].Chain[chain].RuleID[1]
+			epchains := p.getServicePortEndpointChains(svcPortName, tableFamily)
+			rid, err := nftables.AddServiceMatchActRule(p.nfti, tableFamily, svcID, epchains, id)
+			if err != nil {
+				klog.Errorf("failed to add MatchAct rule for port %s with error: %+v", svcPortName.String(), err)
+				continue
+			}
+			// Rule removal succeeded, it is safe to remove MatchAct rule's handle from the chain's RuleID slice
+			var temp []uint64
+			temp = append(temp, svc.Chains[tableFamily].Chain[chain].RuleID[0])
+			temp = append(temp, rid...)
+			temp = append(temp, svc.Chains[tableFamily].Chain[chain].RuleID[1:]...)
+			svc.Chains[tableFamily].Chain[chain].RuleID = temp
+			// Since ServicePort now has Service Affinity configuration, need to check if it has already Endpoints and if it is the case
+			// each Endpoint needs "Update" rule to be inserted as a very first rule.
+			if !svc.WithEndpoints {
+				continue
+			}
 			eps, _ := p.endpointsMap[svcPortName]
 			if err := p.addAffinityEndpoint(eps, tableFamily, svcID, maxAgeSeconds); err != nil {
 				klog.Errorf("failed to add endpoint affinity update rule for port %s with error: %+v", svcPortName.String(), err)
+				continue
 			}
-			p.mu.Unlock()
+			svc.WithAffinity = true
 		}
 		return
 	}
 	if svcNew.Spec.SessionAffinity == v1.ServiceAffinityNone {
-		klog.V(6).Infof("Removing Service Affinity from Service Ports")
+		klog.V(5).Infof("Removing Service Affinity from Service Ports")
+		p.mu.Lock()
+		defer p.mu.Unlock()
 		for _, servicePort := range svcNew.Spec.Ports {
 			svcPortName := getSvcPortName(svcNew.Name, svcNew.Namespace, servicePort.Name, servicePort.Protocol)
-			svcID := p.serviceMap[svcPortName].(*serviceInfo).BaseServiceInfo.svcnft.ServiceID
+			svc := p.serviceMap[svcPortName].(*serviceInfo).BaseServiceInfo.svcnft
+			svcID := svc.ServiceID
+			chain := nftables.K8sSvcPrefix + svcID
 			klog.V(5).Infof("Deleting service affinity map for port %s service ID: %s", svcPortName.String(), svcID)
+			// Deleting MatchAct rule to go back to round robin load balancing, MatchAct rule is stored in chain's RuleID slice
+			// by the index of 1, when Session Affinity is enabled.
+			id := svc.Chains[tableFamily].Chain[chain].RuleID[1]
+			if err := nftables.DeleteServiceRules(p.nfti, tableFamily, chain, []uint64{id}); err != nil {
+				klog.Errorf("failed to delete  MatchAct rule for port %s with error: %+v", svcPortName.String(), err)
+				continue
+			}
+			// Rule removal succeeded, it is safe to remove MatchAct rule's handle from the chain's RuleID slice
+			var temp []uint64
+			temp = append(temp, svc.Chains[tableFamily].Chain[chain].RuleID[0])
+			temp = append(temp, svc.Chains[tableFamily].Chain[chain].RuleID[2:]...)
+			svc.Chains[tableFamily].Chain[chain].RuleID = temp
 			// Since ServicePort now has Service Affinity configuration removed, need to check if it has already Endpoints and if it is the case
 			// each Endpoint needs to have "Update" rule removed.
-			if p.serviceMap[svcPortName].(*serviceInfo).BaseServiceInfo.svcnft.WithEndpoints {
-				p.mu.Lock()
+			if svc.WithEndpoints {
 				eps, _ := p.endpointsMap[svcPortName]
 				if err := p.deleteAffinityEndpoint(eps, tableFamily); err != nil {
 					klog.Errorf("failed to delete endpoint affinity update rule for port %s with error: %+v", svcPortName.String(), err)
+					continue
 				}
-				p.mu.Unlock()
 			}
 			// There should be no more reference to Affinity map in any endpoints, it should be safe to delete it.
 			if err := nftables.DeleteServiceAffinityMap(p.nfti, tableFamily, svcID); err != nil {
 				klog.Errorf("failed to delete service affinity map for port %s with error: %+v", svcPortName.String(), err)
-				return
+				continue
 			}
+			// Cleanup completed, marking Service Port as without Session Affinity
+			svc.WithAffinity = false
 		}
 	}
 }
@@ -879,14 +920,14 @@ func (p *proxy) addAffinityEndpoint(eps []Endpoint, tableFamily utilnftables.Tab
 	for _, ep := range eps {
 		chain := ep.(*endpointsInfo).BaseEndpointInfo.epnft.Rule[tableFamily].Chain
 		index := ep.(*endpointsInfo).BaseEndpointInfo.epnft.Rule[tableFamily].EpIndex
-		if ruleID, err := nftables.AddEndpointUpdateRule(p.nfti, tableFamily, chain, index, svcID, maxAgeSeconds); err != nil {
+		ruleID, err := nftables.AddEndpointUpdateRule(p.nfti, tableFamily, chain, index, svcID, maxAgeSeconds)
+		if err != nil {
 			return err
-		} else {
-			ep.(*endpointsInfo).BaseEndpointInfo.epnft.Rule[tableFamily].WithAffinity = true
-			ep.(*endpointsInfo).BaseEndpointInfo.epnft.Rule[tableFamily].MaxAgeSeconds = maxAgeSeconds
-			// Update rule in Endpoint chain must always be the very first one, inserting it before any already existing rules.
-			ep.(*endpointsInfo).BaseEndpointInfo.epnft.Rule[tableFamily].RuleID = append(ruleID, ep.(*endpointsInfo).BaseEndpointInfo.epnft.Rule[tableFamily].RuleID...)
 		}
+		ep.(*endpointsInfo).BaseEndpointInfo.epnft.Rule[tableFamily].WithAffinity = true
+		ep.(*endpointsInfo).BaseEndpointInfo.epnft.Rule[tableFamily].MaxAgeSeconds = maxAgeSeconds
+		// Update rule in Endpoint chain must always be the very first one, inserting it before any already existing rules.
+		ep.(*endpointsInfo).BaseEndpointInfo.epnft.Rule[tableFamily].RuleID = append(ruleID, ep.(*endpointsInfo).BaseEndpointInfo.epnft.Rule[tableFamily].RuleID...)
 	}
 
 	return nil
@@ -897,17 +938,16 @@ func (p *proxy) addAffinityEndpoint(eps []Endpoint, tableFamily utilnftables.Tab
 func (p *proxy) deleteAffinityEndpoint(eps []Endpoint, tableFamily utilnftables.TableFamily) error {
 	for _, ep := range eps {
 		chain := ep.(*endpointsInfo).BaseEndpointInfo.epnft.Rule[tableFamily].Chain
-		// Update rule is always first rule in the endpoint chain
+		// If Session Affinity is enabled Update rule always has index 0 in am endpoint's chain rules slice
 		ruleID := ep.(*endpointsInfo).BaseEndpointInfo.epnft.Rule[tableFamily].RuleID[0]
 		klog.V(6).Infof("Deleting Update rule for endpoint chain: %s, rule handle: %d", chain, ruleID)
 		if err := nftables.DeleteEndpointUpdateRule(p.nfti, tableFamily, chain, int(ruleID)); err != nil {
 			return err
-		} else {
-			ep.(*endpointsInfo).BaseEndpointInfo.epnft.Rule[tableFamily].WithAffinity = false
-			ep.(*endpointsInfo).BaseEndpointInfo.epnft.Rule[tableFamily].MaxAgeSeconds = 0
-			// Update rule in Endpoint chain must always be the very first one, inserting it before any already existing rules.
-			ep.(*endpointsInfo).BaseEndpointInfo.epnft.Rule[tableFamily].RuleID = ep.(*endpointsInfo).BaseEndpointInfo.epnft.Rule[tableFamily].RuleID[1:]
 		}
+		ep.(*endpointsInfo).BaseEndpointInfo.epnft.Rule[tableFamily].WithAffinity = false
+		ep.(*endpointsInfo).BaseEndpointInfo.epnft.Rule[tableFamily].MaxAgeSeconds = 0
+		// Update rule in Endpoint chain must always be the very first one, inserting it before any already existing rules.
+		ep.(*endpointsInfo).BaseEndpointInfo.epnft.Rule[tableFamily].RuleID = ep.(*endpointsInfo).BaseEndpointInfo.epnft.Rule[tableFamily].RuleID[1:]
 	}
 
 	return nil
