@@ -53,9 +53,9 @@ func (c *serviceController) handleAddService(obj interface{}) {
 		return
 	}
 	klog.V(5).Infof("service add event for %s/%s", svc.ObjectMeta.Namespace, svc.ObjectMeta.Name)
-	//	if svc.Name == "app2" {
-	c.proxy.AddService(svc)
-	//	}
+	if svc.Name == "app2" {
+		c.proxy.AddService(svc)
+	}
 }
 
 func (c *serviceController) handleUpdateService(oldObj, newObj interface{}) {
@@ -73,9 +73,9 @@ func (c *serviceController) handleUpdateService(oldObj, newObj interface{}) {
 		return
 	}
 	klog.V(5).Infof("service update event for %s/%s", svcNew.ObjectMeta.Namespace, svcNew.ObjectMeta.Name)
-	//	if svcNew.Name == "app2" || svcOld.Name == "app2" {
-	c.proxy.UpdateService(svcOld, svcNew)
-	//	}
+	if svcNew.Name == "app2" || svcOld.Name == "app2" {
+		c.proxy.UpdateService(svcOld, svcNew)
+	}
 }
 
 func (c *serviceController) handleDeleteService(obj interface{}) {
@@ -92,9 +92,9 @@ func (c *serviceController) handleDeleteService(obj interface{}) {
 		}
 	}
 	klog.V(5).Infof("service delete event for %s/%s", svc.ObjectMeta.Namespace, svc.ObjectMeta.Name)
-	//	if svc.Name == "app2" {
-	c.proxy.DeleteService(svc)
-	//	}
+	if svc.Name == "app2" {
+		c.proxy.DeleteService(svc)
+	}
 }
 
 func (c *serviceController) Start(stopCh <-chan struct{}) error {

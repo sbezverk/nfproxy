@@ -32,13 +32,11 @@ import (
 	"github.com/sbezverk/nfproxy/pkg/proxy"
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/util/wait"
-	utilfeature "k8s.io/apiserver/pkg/util/feature"
 	kubeinformers "k8s.io/client-go/informers"
 	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/tools/record"
 	"k8s.io/component-base/logs"
 	"k8s.io/klog"
-	"k8s.io/kubernetes/pkg/features"
 	utilnode "k8s.io/kubernetes/pkg/util/node"
 )
 
@@ -112,7 +110,7 @@ func main() {
 	recorder := eventBroadcaster.NewRecorder(scheme.Scheme, v1.EventSource{Component: "nfproxy", Host: hostname})
 
 	// Create new instance of a proxy process
-	nfproxy := proxy.NewProxy(nfti, hostname, recorder)
+	nfproxy := proxy.NewProxy(nfti, hostname, recorder, endpointSlice)
 	// For "in-cluster" mode a rule to reach API server must be programmed, otherwise
 	// the services/endpoints controller cannot reach it.
 	host := os.Getenv("KUBERNETES_SERVICE_HOST")
@@ -136,7 +134,7 @@ func main() {
 	// If EndpointSlice support is requested and feature gate for EndpointSLice is enabled,
 	// instantiate EndpointSlice controller, otherwise Endpoints controller will be used.
 	var ep epController
-	if endpointSlice && utilfeature.DefaultFeatureGate.Enabled(features.EndpointSlice) {
+	if endpointSlice {
 		ep = controller.NewEndpointSliceController(nfproxy, client, kubeInformerFactory.Discovery().V1beta1().EndpointSlices())
 	} else {
 		ep = controller.NewEndpointsController(nfproxy, client, kubeInformerFactory.Core().V1().Endpoints())

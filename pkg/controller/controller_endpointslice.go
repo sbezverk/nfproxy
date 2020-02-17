@@ -18,6 +18,7 @@ package controller
 
 import (
 	"fmt"
+	"strings"
 
 	v1 "k8s.io/api/core/v1"
 	discovery "k8s.io/api/discovery/v1beta1"
@@ -53,10 +54,10 @@ func (c *endpointSliceController) handleAddEndpointSlice(obj interface{}) {
 		utilruntime.HandleError(fmt.Errorf("unexpected object type: %v", obj))
 		return
 	}
-	klog.V(5).Infof("endpoint slice add event for %s/%s Object: %+v", epsl.ObjectMeta.Namespace, epsl.ObjectMeta.Name, epsl)
-	//	if ep.Name == "app2" {
-	// c.proxy.AddEndpoints(ep)
-	//	}
+	klog.V(5).Infof("endpoint slice add event for %s/%s", epsl.ObjectMeta.Namespace, epsl.ObjectMeta.Name)
+	if strings.Contains(epsl.Name, "app2") {
+		c.proxy.AddEndpointSlice(epsl)
+	}
 }
 
 func (c *endpointSliceController) handleUpdateEndpointSlice(oldObj, newObj interface{}) {
@@ -75,11 +76,10 @@ func (c *endpointSliceController) handleUpdateEndpointSlice(oldObj, newObj inter
 		return
 	}
 
-	klog.V(6).Infof("endpoint slice update event for %s/%s Subsets old: %+v Subsets new: %+v", epslNew.ObjectMeta.Namespace, epslNew.ObjectMeta.Name,
-		epslOld.Ports, epslNew.Ports)
-	//	if epOld.Name == "app2" || epNew.Name == "app2" {
-	// c.proxy.UpdateEndpoints(epOld, epNew)
-	//	}
+	klog.V(6).Infof("endpoint slice update event for %s/%s", epslNew.ObjectMeta.Namespace, epslNew.ObjectMeta.Name)
+	if strings.Contains(epslNew.Name, "app2") {
+		c.proxy.UpdateEndpointSlice(epslOld, epslNew)
+	}
 }
 
 func (c *endpointSliceController) handleDeleteEndpointSlice(obj interface{}) {
@@ -95,10 +95,10 @@ func (c *endpointSliceController) handleDeleteEndpointSlice(obj interface{}) {
 			return
 		}
 	}
-	klog.V(5).Infof("endpoint slice delete event for %s/%s Object: %+v", epsl.ObjectMeta.Namespace, epsl.ObjectMeta.Name, epsl)
-	//	if ep.Name == "app2" {
-	// c.proxy.DeleteEndpoints(ep)
-	//	}
+	klog.V(5).Infof("endpoint slice delete event for %s/%s", epsl.ObjectMeta.Namespace, epsl.ObjectMeta.Name)
+	if strings.Contains(epsl.Name, "app2") {
+		c.proxy.DeleteEndpointSlice(epsl)
+	}
 }
 
 func (c *endpointSliceController) Start(stopCh <-chan struct{}) error {
@@ -116,7 +116,7 @@ func (c *endpointSliceController) Start(stopCh <-chan struct{}) error {
 	return nil
 }
 
-// NewController returns a new cnat controller
+// NewEndpointSliceController returns a new EndpointSlice controller
 func NewEndpointSliceController(
 	proxy proxy.Proxy,
 	kubeClientset kubernetes.Interface,

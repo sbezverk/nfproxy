@@ -21,6 +21,7 @@ import (
 	"sync"
 
 	v1 "k8s.io/api/core/v1"
+	discovery "k8s.io/api/discovery/v1beta1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/klog"
 )
@@ -30,8 +31,9 @@ import (
 // types.NamespacedName of a service/endpoint.
 type cache struct {
 	sync.Mutex
-	svcCache map[types.NamespacedName]*v1.Service
-	epCache  map[types.NamespacedName]*v1.Endpoints
+	svcCache  map[types.NamespacedName]*v1.Service
+	epCache   map[types.NamespacedName]*v1.Endpoints
+	epslCache map[types.NamespacedName]*discovery.EndpointSlice
 }
 
 // getCachedSvcVersion return version of stored service
@@ -119,5 +121,49 @@ func (c *cache) removeEpFromCache(name, namespace string) {
 		delete(c.epCache, types.NamespacedName{Name: name, Namespace: namespace})
 	} else {
 		klog.Warningf("endpoint %s/%s not found in the cache", namespace, name)
+	}
+}
+
+// getCachedEpSlVersion return version of stored endpoint slice
+func (c *cache) getCachedEpSlVersion(name, namespace string) (string, error) {
+	c.Lock()
+	defer c.Unlock()
+	epsl, ok := c.epslCache[types.NamespacedName{Name: name, Namespace: namespace}]
+	if !ok {
+		return "", fmt.Errorf("endpoint slice %s/%s not found in the cache", namespace, name)
+	}
+
+	return epsl.ObjectMeta.GetResourceVersion(), nil
+}
+
+// getLastKnownEpSlFromCache return pointer to the latest known/stored instance of the endpoint slice
+func (c *cache) getLastKnownEpSlFromCache(name, namespace string) (*discovery.EndpointSlice, error) {
+	c.Lock()
+	defer c.Unlock()
+	epsl, ok := c.epslCache[types.NamespacedName{Name: name, Namespace: namespace}]
+	if !ok {
+		return nil, fmt.Errorf("endpoint slice %s/%s not found in the cache", namespace, name)
+	}
+
+	return epsl, nil
+}
+
+// storeEpSlInCache stores in the cache instance of a endpoint slice, if cache does not have already
+// endpoint slice, it will be added, if it already has, iy will be replaced with the one passed
+// as a parameter.
+func (c *cache) storeEpSlInCache(epsl *discovery.EndpointSlice) {
+	c.Lock()
+	defer c.Unlock()
+	c.epslCache[types.NamespacedName{Name: epsl.ObjectMeta.Name, Namespace: epsl.ObjectMeta.Namespace}] = epsl.DeepCopy()
+}
+
+// removeEpSlFromCache removes stored service from cache.
+func (c *cache) removeEpSlFromCache(name, namespace string) {
+	c.Lock()
+	defer c.Unlock()
+	if _, ok := c.epslCache[types.NamespacedName{Name: name, Namespace: namespace}]; ok {
+		delete(c.epslCache, types.NamespacedName{Name: name, Namespace: namespace})
+	} else {
+		klog.Warningf("endpoint slice %s/%s not found in the cache", namespace, name)
 	}
 }

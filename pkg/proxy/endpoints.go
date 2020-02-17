@@ -29,6 +29,14 @@ import (
 	utilproxy "k8s.io/kubernetes/pkg/proxy/util"
 )
 
+// epInfo is used to carry a single processed instance of EP's information,
+// this struct is populated either from Endpoints or EndpointSlice object.
+type epInfo struct {
+	name ServicePortName
+	addr *v1.EndpointAddress
+	port *v1.EndpointPort
+}
+
 // BaseEndpointInfo contains base information that defines an endpoint.
 // This could be used directly by proxier while processing endpoints,
 // or can be used for constructing a more specific EndpointInfo struct
