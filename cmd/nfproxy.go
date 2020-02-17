@@ -123,7 +123,10 @@ func main() {
 
 	kubeInformerFactory := kubeinformers.NewSharedInformerFactory(client, time.Minute*10)
 
-	controller := controller.NewController(nfproxy, client, kubeInformerFactory.Core().V1().Services(), kubeInformerFactory.Core().V1().Endpoints())
+	controller := controller.NewController(nfproxy, client,
+		kubeInformerFactory.Core().V1().Services(),
+		kubeInformerFactory.Core().V1().Endpoints(),
+		kubeInformerFactory.Discovery().V1beta1().EndpointSlices())
 
 	kubeInformerFactory.Start(wait.NeverStop)
 

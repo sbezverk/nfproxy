@@ -20,8 +20,10 @@ import (
 	"fmt"
 
 	v1 "k8s.io/api/core/v1"
+	discovery "k8s.io/api/discovery/v1beta1"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	corev1informer "k8s.io/client-go/informers/core/v1"
+	"k8s.io/client-go/informers/discovery/v1beta1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/kubernetes/scheme"
 	typedcorev1 "k8s.io/client-go/kubernetes/typed/core/v1"
@@ -86,7 +88,7 @@ func (c *controller) handleDeleteService(obj interface{}) {
 			utilruntime.HandleError(fmt.Errorf("unexpected object type: %v", obj))
 			return
 		}
-		if _, ok = tombstone.Obj.(*v1.Service); !ok {
+		if _, ok = tombstone.Obj.(*v1.Endpoints); !ok {
 			utilruntime.HandleError(fmt.Errorf("unexpected object type: %v", obj))
 			return
 		}
@@ -153,6 +155,60 @@ func (c *controller) handleDeleteEndpoint(obj interface{}) {
 	//	}
 }
 
+func (c *controller) handleAddEndpointSlice(obj interface{}) {
+	epsl, ok := obj.(*discovery.EndpointSlice)
+	if !ok {
+		utilruntime.HandleError(fmt.Errorf("unexpected object type: %v", obj))
+		return
+	}
+	klog.V(5).Infof("endpoint slice add event for %s/%s Object: %+v", epsl.ObjectMeta.Namespace, epsl.ObjectMeta.Name, epsl)
+	//	if ep.Name == "app2" {
+	// c.proxy.AddEndpoints(ep)
+	//	}
+}
+
+func (c *controller) handleUpdateEndpointSlice(oldObj, newObj interface{}) {
+	epslOld, ok := oldObj.(*discovery.EndpointSlice)
+	if !ok {
+		utilruntime.HandleError(fmt.Errorf("unexpected object type: %v", oldObj))
+		return
+	}
+	epslNew, ok := newObj.(*discovery.EndpointSlice)
+	if !ok {
+		utilruntime.HandleError(fmt.Errorf("unexpected object type: %v", newObj))
+		return
+	}
+
+	if epslOld.ObjectMeta.ResourceVersion == epslNew.ObjectMeta.ResourceVersion {
+		return
+	}
+
+	klog.V(6).Infof("endpoint slice update event for %s/%s Subsets old: %+v Subsets new: %+v", epslNew.ObjectMeta.Namespace, epslNew.ObjectMeta.Name,
+		epslOld.Ports, epslNew.Ports)
+	//	if epOld.Name == "app2" || epNew.Name == "app2" {
+	// c.proxy.UpdateEndpoints(epOld, epNew)
+	//	}
+}
+
+func (c *controller) handleDeleteEndpointSlice(obj interface{}) {
+	epsl, ok := obj.(*discovery.EndpointSlice)
+	if !ok {
+		tombstone, ok := obj.(cache.DeletedFinalStateUnknown)
+		if !ok {
+			utilruntime.HandleError(fmt.Errorf("unexpected object type: %v", obj))
+			return
+		}
+		if _, ok = tombstone.Obj.(*v1.Service); !ok {
+			utilruntime.HandleError(fmt.Errorf("unexpected object type: %v", obj))
+			return
+		}
+	}
+	klog.V(5).Infof("endpoint slice delete event for %s/%s Object: %+v", epsl.ObjectMeta.Namespace, epsl.ObjectMeta.Name, epsl)
+	//	if ep.Name == "app2" {
+	// c.proxy.DeleteEndpoints(ep)
+	//	}
+}
+
 func (c *controller) Start(stopCh <-chan struct{}) error {
 	defer utilruntime.HandleCrash()
 
@@ -176,7 +232,8 @@ func NewController(
 	proxy proxy.Proxy,
 	kubeClientset kubernetes.Interface,
 	svcInformer corev1informer.ServiceInformer,
-	epInformer corev1informer.EndpointsInformer) Controller {
+	epInformer corev1informer.EndpointsInformer,
+	epSliceInformer v1beta1.EndpointSliceInformer) Controller {
 
 	klog.V(4).Info("Creating event broadcaster")
 	eventBroadcaster := record.NewBroadcaster()
@@ -206,5 +263,12 @@ func NewController(
 		UpdateFunc: controller.handleUpdateEndpoint,
 		DeleteFunc: controller.handleDeleteEndpoint,
 	})
+
+	epSliceInformer.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
+		AddFunc:    controller.handleAddEndpointSlice,
+		UpdateFunc: controller.handleUpdateEndpointSlice,
+		DeleteFunc: controller.handleDeleteEndpointSlice,
+	})
+
 	return controller
 }
