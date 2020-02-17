@@ -32,11 +32,13 @@ import (
 	"github.com/sbezverk/nfproxy/pkg/proxy"
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/util/wait"
+	utilfeature "k8s.io/apiserver/pkg/util/feature"
 	kubeinformers "k8s.io/client-go/informers"
 	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/tools/record"
 	"k8s.io/component-base/logs"
 	"k8s.io/klog"
+	"k8s.io/kubernetes/pkg/features"
 	utilnode "k8s.io/kubernetes/pkg/util/node"
 )
 
@@ -44,12 +46,18 @@ var (
 	kubeconfig      string
 	ipv4ClusterCIDR string
 	ipv6ClusterCIDR string
+	endpointSlice   bool
 )
+
+type epController interface {
+	Start(<-chan struct{}) error
+}
 
 func init() {
 	flag.StringVar(&kubeconfig, "kubeconfig", "", "Absolute path to the kubeconfig file.")
 	flag.StringVar(&ipv4ClusterCIDR, "ipv4clustercidr", "", "The IPv4 CIDR range of pods in the cluster.")
 	flag.StringVar(&ipv6ClusterCIDR, "ipv6clustercidr", "", "The IPv6 CIDR range of pods in the cluster.")
+	flag.BoolVar(&endpointSlice, "endpointslice", false, "Enables to use EndpointSlice instead of Endpoints. Default is flase.")
 }
 
 func setupSignalHandler() (stopCh <-chan struct{}) {
@@ -123,15 +131,24 @@ func main() {
 
 	kubeInformerFactory := kubeinformers.NewSharedInformerFactory(client, time.Minute*10)
 
-	controller := controller.NewController(nfproxy, client,
-		kubeInformerFactory.Core().V1().Services(),
-		kubeInformerFactory.Core().V1().Endpoints(),
-		kubeInformerFactory.Discovery().V1beta1().EndpointSlices())
+	svcController := controller.NewServiceController(nfproxy, client, kubeInformerFactory.Core().V1().Services())
+
+	// If EndpointSlice support is requested and feature gate for EndpointSLice is enabled,
+	// instantiate EndpointSlice controller, otherwise Endpoints controller will be used.
+	var ep epController
+	if endpointSlice && utilfeature.DefaultFeatureGate.Enabled(features.EndpointSlice) {
+		ep = controller.NewEndpointSliceController(nfproxy, client, kubeInformerFactory.Discovery().V1beta1().EndpointSlices())
+	} else {
+		ep = controller.NewEndpointsController(nfproxy, client, kubeInformerFactory.Core().V1().Endpoints())
+	}
 
 	kubeInformerFactory.Start(wait.NeverStop)
 
-	if err = controller.Start(wait.NeverStop); err != nil {
-		klog.Fatalf("Error running controller: %s", err.Error())
+	if err = svcController.Start(wait.NeverStop); err != nil {
+		klog.Fatalf("Error running Service controller: %s", err.Error())
+	}
+	if err = ep.Start(wait.NeverStop); err != nil {
+		klog.Fatalf("Error running endpoint controller: %s", err.Error())
 	}
 
 	stopCh := setupSignalHandler()
