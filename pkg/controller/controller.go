@@ -127,6 +127,7 @@ func (c *controller) handleUpdateEndpoint(oldObj, newObj interface{}) {
 	if epNew.ObjectMeta.Name == "kube-controller-manager" || epNew.ObjectMeta.Name == "kube-scheduler" {
 		return
 	}
+	klog.V(5).Infof("endpoint update event for %s/%s", epNew.ObjectMeta.Namespace, epNew.ObjectMeta.Name)
 	klog.V(6).Infof("endpoint update event for %s/%s Subsets old: %+v Subsets new: %+v", epNew.ObjectMeta.Namespace, epNew.ObjectMeta.Name, epOld.Subsets, epNew.Subsets)
 	//	if epOld.Name == "app2" || epNew.Name == "app2" {
 	c.proxy.UpdateEndpoints(epOld, epNew)
@@ -141,7 +142,7 @@ func (c *controller) handleDeleteEndpoint(obj interface{}) {
 			utilruntime.HandleError(fmt.Errorf("unexpected object type: %v", obj))
 			return
 		}
-		if _, ok = tombstone.Obj.(*v1.Service); !ok {
+		if _, ok = tombstone.Obj.(*v1.Endpoints); !ok {
 			utilruntime.HandleError(fmt.Errorf("unexpected object type: %v", obj))
 			return
 		}
