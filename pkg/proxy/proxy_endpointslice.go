@@ -22,19 +22,34 @@ import (
 
 	v1 "k8s.io/api/core/v1"
 	discovery "k8s.io/api/discovery/v1beta1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/klog"
 )
 
+func getServiceNameFromOwnerReference(refs []metav1.OwnerReference) (string, bool) {
+	for _, ref := range refs {
+		if ref.Kind == "Service" {
+			return ref.Name, true
+		}
+	}
+	return "", false
+}
+
 func processEpSlice(epsl *discovery.EndpointSlice) ([]epInfo, error) {
 	var ports []epInfo
-
+	svcName, found := getServiceNameFromOwnerReference(epsl.GetOwnerReferences())
+	if !found {
+		// Slice does not have Service IN Owner References
+		return ports, nil
+	}
 	for _, e := range epsl.Endpoints {
 		var svcPortName ServicePortName
 		for _, p := range epsl.Ports {
 			if *p.Port == 0 {
 				return nil, fmt.Errorf("found invalid endpoint slice port %s", *p.Name)
 			}
-			svcPortName = getSvcPortName(epsl.Name, epsl.Namespace, *p.Name, *p.Protocol)
+
+			svcPortName = getSvcPortName(svcName, epsl.Namespace, *p.Name, *p.Protocol)
 			for _, addr := range e.Addresses {
 				port := epInfo{
 					name: svcPortName,
@@ -68,6 +83,7 @@ func processEpSlice(epsl *discovery.EndpointSlice) ([]epInfo, error) {
 func (p *proxy) AddEndpointSlice(epsl *discovery.EndpointSlice) {
 	s := time.Now()
 	defer klog.V(5).Infof("AddEndpointSlice for a EndpointSlice %s/%s ran for: %d nanoseconds", epsl.Namespace, epsl.Name, time.Since(s))
+	p.cache.storeEpSlInCache(epsl)
 	klog.V(5).Infof("AddEndpointSlice for a EndpointSlice %s/%s", epsl.Namespace, epsl.Name)
 	klog.V(6).Infof("Endpoints: %+v Ports: %+v Address type: %+v", epsl.Endpoints, epsl.Ports, epsl.AddressType)
 
