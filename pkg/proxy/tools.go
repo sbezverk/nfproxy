@@ -24,6 +24,7 @@ import (
 
 	utilnftables "github.com/google/nftables"
 	v1 "k8s.io/api/core/v1"
+	discovery "k8s.io/api/discovery/v1beta1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/intstr"
@@ -32,7 +33,7 @@ import (
 
 // BootstrapRules programs rules so the controller could reach API server
 // when it runs "in-cluster" mode.
-func BootstrapRules(p Proxy, host, extAddr string, port string) error {
+func BootstrapRules(p Proxy, host, extAddr string, port string, endpointSlice bool) error {
 	// TODO (sbezverk) Consider adding ip address validation
 	pn, err := strconv.Atoi(port)
 	if err != nil {
@@ -59,31 +60,73 @@ func BootstrapRules(p Proxy, host, extAddr string, port string) error {
 			ClusterIP: host,
 		},
 	}
-	endpoint := v1.Endpoints{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "kubernetes",
-			Namespace: "default",
-		},
-		Subsets: []v1.EndpointSubset{
-			{
-				Addresses: []v1.EndpointAddress{
-					{
-						IP: extAddr,
-					},
-				},
-				Ports: []v1.EndpointPort{
-					{
-						Name:     "https",
-						Protocol: v1.ProtocolTCP,
-						// TODO (sbezverk) find a way to get this port from environment
-						Port: int32(6443),
+	p.AddService(&svc)
+	if endpointSlice {
+		ready := true
+		name := "https"
+		proto := v1.ProtocolTCP
+		//		nport, err := strconv.Atoi(port)
+		//		if err != nil {
+		//			return err
+		//		}
+		i32port := int32(6443)
+		label := map[string]string{
+			"kubernetes.io/service-name": "kubernetes",
+		}
+		epsl := discovery.EndpointSlice{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "kubernetes",
+				Namespace: "default",
+				Labels:    label,
+			},
+			Endpoints: []discovery.Endpoint{
+				{
+					Addresses: []string{extAddr},
+					Conditions: discovery.EndpointConditions{
+						Ready: &ready,
 					},
 				},
 			},
-		},
+			Ports: []discovery.EndpointPort{
+				{
+					Name:     &name,
+					Protocol: &proto,
+					Port:     &i32port,
+				},
+			},
+		}
+
+		epsl.AddressType = discovery.AddressTypeIPv4
+		if ipFamily == v1.IPv6Protocol {
+			epsl.AddressType = discovery.AddressTypeIPv6
+		}
+		p.AddEndpointSlice(&epsl)
+	} else {
+		endpoint := v1.Endpoints{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "kubernetes",
+				Namespace: "default",
+			},
+			Subsets: []v1.EndpointSubset{
+				{
+					Addresses: []v1.EndpointAddress{
+						{
+							IP: extAddr,
+						},
+					},
+					Ports: []v1.EndpointPort{
+						{
+							Name:     "https",
+							Protocol: v1.ProtocolTCP,
+							// TODO (sbezverk) find a way to get this port from environment
+							Port: int32(6443),
+						},
+					},
+				},
+			},
+		}
+		p.AddEndpoints(&endpoint)
 	}
-	p.AddService(&svc)
-	p.AddEndpoints(&endpoint)
 
 	return nil
 }
@@ -139,6 +182,34 @@ func isPortInSubset(subsets []v1.EndpointSubset, port *v1.EndpointPort, addr *v1
 			}
 		}
 	}
+	return false
+}
+
+func isPortInEndpointSlice(epsl *discovery.EndpointSlice, port *v1.EndpointPort, address *v1.EndpointAddress) bool {
+	for _, e := range epsl.Endpoints {
+		for _, p := range epsl.Ports {
+			checkName := ""
+			if p.Name != nil {
+				checkName = *p.Name
+			}
+			checkPort := int32(0)
+			if p.Port != nil {
+				checkPort = *p.Port
+			}
+			var checkProto v1.Protocol
+			if p.Protocol != nil {
+				checkProto = *p.Protocol
+			}
+			if checkName == port.Name && checkPort == port.Port && checkProto == port.Protocol {
+				for _, addr := range e.Addresses {
+					if strings.Compare(addr, address.IP) == 0 {
+						return true
+					}
+				}
+			}
+		}
+	}
+
 	return false
 }
 

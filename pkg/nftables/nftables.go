@@ -334,14 +334,14 @@ func GetSvcChain(tableFamily nftables.TableFamily, svcID string) map[nftables.Ta
 		Chain:  K8sSvcPrefix + svcID,
 		RuleID: nil,
 	}
-	chain.Chain[K8sFwPrefix+svcID] = &Rule{
-		Chain:  K8sFwPrefix + svcID,
-		RuleID: nil,
-	}
-	chain.Chain[K8sXlbPrefix+svcID] = &Rule{
-		Chain:  K8sXlbPrefix + svcID,
-		RuleID: nil,
-	}
+	//	chain.Chain[K8sFwPrefix+svcID] = &Rule{
+	//		Chain:  K8sFwPrefix + svcID,
+	//		RuleID: nil,
+	//	}
+	//	chain.Chain[K8sXlbPrefix+svcID] = &Rule{
+	//		Chain:  K8sXlbPrefix + svcID,
+	//		RuleID: nil,
+	//	}
 	chains[tableFamily] = chain
 
 	return chains
@@ -492,7 +492,7 @@ func RemoveFromNodeportSet(nfti *NFTInterface, tableFamily nftables.TableFamily,
 
 // AddServiceChains adds a specific to service port chains k8s-nfproxy-svc-{svcID},k8s-nfproxy-fw-{svcID}, k8s-nfproxy-xlb-{svcID}
 func AddServiceChains(nfti *NFTInterface, tableFamily nftables.TableFamily, svcID string) error {
-	for _, prefix := range []string{K8sSvcPrefix, K8sFwPrefix, K8sXlbPrefix} {
+	for _, prefix := range []string{K8sSvcPrefix /*, K8sFwPrefix, K8sXlbPrefix*/} {
 		ci := ciForTableFamily(nfti, tableFamily)
 		if err := ci.Chains().CreateImm(prefix+svcID, nil); err != nil {
 			return err
@@ -503,7 +503,7 @@ func AddServiceChains(nfti *NFTInterface, tableFamily nftables.TableFamily, svcI
 
 // DeleteServiceChains removes a specific to service port chains k8s-nfproxy-svc-{svcID},k8s-nfproxy-fw-{svcID}, k8s-nfproxy-xlb-{svcID}
 func DeleteServiceChains(nfti *NFTInterface, tableFamily nftables.TableFamily, svcID string) error {
-	for _, prefix := range []string{K8sSvcPrefix, K8sFwPrefix, K8sXlbPrefix} {
+	for _, prefix := range []string{K8sSvcPrefix /*, K8sFwPrefix, K8sXlbPrefix*/} {
 		ci := ciForTableFamily(nfti, tableFamily)
 		if err := ci.Chains().DeleteImm(prefix + svcID); err != nil {
 			return err
