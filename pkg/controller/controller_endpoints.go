@@ -53,9 +53,9 @@ func (c *endpointsController) handleAddEndpoint(obj interface{}) {
 		return
 	}
 	klog.V(5).Infof("endpoint add event for %s/%s", ep.ObjectMeta.Namespace, ep.ObjectMeta.Name)
-	if ep.Name == "app2" {
-		c.proxy.AddEndpoints(ep)
-	}
+	// if ep.Name == "app2" {
+	c.proxy.AddEndpoints(ep)
+	// }
 }
 
 func (c *endpointsController) handleUpdateEndpoint(oldObj, newObj interface{}) {
@@ -78,9 +78,9 @@ func (c *endpointsController) handleUpdateEndpoint(oldObj, newObj interface{}) {
 	}
 	klog.V(5).Infof("endpoint update event for %s/%s", epNew.ObjectMeta.Namespace, epNew.ObjectMeta.Name)
 	klog.V(6).Infof("endpoint %s/%s Subsets old: %+v Subsets new: %+v", epNew.ObjectMeta.Namespace, epNew.ObjectMeta.Name, epOld.Subsets, epNew.Subsets)
-	if epOld.Name == "app2" || epNew.Name == "app2" {
-		c.proxy.UpdateEndpoints(epOld, epNew)
-	}
+	// if epNew.Name == "app2" {
+	c.proxy.UpdateEndpoints(epOld, epNew)
+	// }
 }
 
 func (c *endpointsController) handleDeleteEndpoint(obj interface{}) {
@@ -97,9 +97,9 @@ func (c *endpointsController) handleDeleteEndpoint(obj interface{}) {
 		}
 	}
 	klog.V(5).Infof("endpoint delete event for %s/%s", ep.ObjectMeta.Namespace, ep.ObjectMeta.Name)
-	if ep.Name == "app2" {
-		c.proxy.DeleteEndpoints(ep)
-	}
+	// if ep.Name == "app2" {
+	c.proxy.DeleteEndpoints(ep)
+	// }
 }
 
 func (c *endpointsController) Start(stopCh <-chan struct{}) error {

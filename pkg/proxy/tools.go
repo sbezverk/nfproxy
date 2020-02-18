@@ -24,6 +24,7 @@ import (
 
 	utilnftables "github.com/google/nftables"
 	v1 "k8s.io/api/core/v1"
+	discovery "k8s.io/api/discovery/v1beta1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/intstr"
@@ -139,6 +140,34 @@ func isPortInSubset(subsets []v1.EndpointSubset, port *v1.EndpointPort, addr *v1
 			}
 		}
 	}
+	return false
+}
+
+func isPortInEndpointSlice(epsl *discovery.EndpointSlice, port *v1.EndpointPort, address *v1.EndpointAddress) bool {
+	for _, e := range epsl.Endpoints {
+		for _, p := range epsl.Ports {
+			checkName := ""
+			if p.Name != nil {
+				checkName = *p.Name
+			}
+			checkPort := int32(0)
+			if p.Port != nil {
+				checkPort = *p.Port
+			}
+			var checkProto v1.Protocol
+			if p.Protocol != nil {
+				checkProto = *p.Protocol
+			}
+			if checkName == port.Name && checkPort == port.Port && checkProto == port.Protocol {
+				for _, addr := range e.Addresses {
+					if strings.Compare(addr, address.IP) == 0 {
+						return true
+					}
+				}
+			}
+		}
+	}
+
 	return false
 }
 
