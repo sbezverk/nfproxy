@@ -61,6 +61,18 @@ rules:
       - nodes
     verbs:
       - watch
+  - apiGroups:
+    - discovery.k8s.io
+    resources:
+    - endpointslices
+    verbs:
+    - list
+  - apiGroups:
+    - discovery.k8s.io
+    resources:
+    - endpointslices
+    verbs:
+    - watch
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
@@ -101,6 +113,8 @@ spec:
             - "57.112.0.0/12"
             - --ipv6clustercidr
             - ""
+            - --v
+            - "5"
           env:
             - name: NFPROXY_IP
               valueFrom:

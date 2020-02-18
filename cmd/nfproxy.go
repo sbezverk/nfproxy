@@ -121,7 +121,8 @@ func main() {
 			klog.Errorf("nfproxy in \"in-cluster\" more requires env variable \"NFPROXY_IP\" to be set to nfproxy pod's IP address")
 			os.Exit(1)
 		}
-		if err := proxy.BootstrapRules(nfproxy, host, extAddr, port); err != nil {
+		klog.Info("Programming bootstrap rule for kubernetes service.")
+		if err := proxy.BootstrapRules(nfproxy, host, extAddr, port, endpointSlice); err != nil {
 			klog.Errorf("nfproxy failed to add bootstrap rules with error: %+v", err)
 			os.Exit(1)
 		}

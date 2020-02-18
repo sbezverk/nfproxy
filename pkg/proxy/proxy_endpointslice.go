@@ -22,22 +22,21 @@ import (
 
 	v1 "k8s.io/api/core/v1"
 	discovery "k8s.io/api/discovery/v1beta1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/klog"
 )
 
-func getServiceNameFromOwnerReference(refs []metav1.OwnerReference) (string, bool) {
-	for _, ref := range refs {
-		if ref.Kind == "Service" {
-			return ref.Name, true
-		}
+func getServiceNameFromOwnerReference(labels map[string]string) (string, bool) {
+	name, ok := labels[discovery.LabelServiceName]
+	if !ok {
+		return "", false
 	}
-	return "", false
+
+	return name, true
 }
 
 func processEpSlice(epsl *discovery.EndpointSlice) ([]epInfo, error) {
 	var ports []epInfo
-	svcName, found := getServiceNameFromOwnerReference(epsl.GetOwnerReferences())
+	svcName, found := getServiceNameFromOwnerReference(epsl.ObjectMeta.Labels)
 	if !found {
 		// Slice does not have Service IN Owner References
 		return ports, nil
