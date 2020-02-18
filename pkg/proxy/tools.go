@@ -65,13 +65,10 @@ func BootstrapRules(p Proxy, host, extAddr string, port string, endpointSlice bo
 		ready := true
 		name := "https"
 		proto := v1.ProtocolTCP
-		//		nport, err := strconv.Atoi(port)
-		//		if err != nil {
-		//			return err
-		//		}
+		// Todo (sbezverk) must be passed as a parameter
 		i32port := int32(6443)
 		label := map[string]string{
-			"kubernetes.io/service-name": "kubernetes",
+			discovery.LabelServiceName: "kubernetes",
 		}
 		epsl := discovery.EndpointSlice{
 			ObjectMeta: metav1.ObjectMeta{

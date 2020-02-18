@@ -115,13 +115,13 @@ func (p *proxy) removeServicePortFromSets(servicePort ServicePort, tableFamily u
 			return err
 		}
 	}
-
-	if nodePort := servicePort.NodePort(); nodePort != 0 {
+	for _, nodePort := range storedSvc.Spec.Ports {
 		klog.V(6).Infof(" removing Service port %s from NodePortSet, protocol: %s port: %d ", servicePort.String(), proto, port)
-		if err := nftables.RemoveFromNodeportSet(p.nfti, tableFamily, proto, uint16(nodePort), nftables.K8sSvcPrefix+svcID); err != nil {
+		if err := nftables.RemoveFromNodeportSet(p.nfti, tableFamily, proto, uint16(nodePort.NodePort), nftables.K8sSvcPrefix+svcID); err != nil {
 			return err
 		}
 	}
+
 	return nil
 }
 
