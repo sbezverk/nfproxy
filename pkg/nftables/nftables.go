@@ -371,14 +371,14 @@ func AddToSet(nfti *NFTInterface, tableFamily nftables.TableFamily, proto v1.Pro
 	if err = si.Sets().SetAddElements(set, se); err != nil {
 		// TODO Add logic to retry, for now just error out
 		if errors.Is(err, unix.EBUSY) {
-			klog.Warningf("AddToSet for %s:%s:%d failed with error: %v", proto, addr, port, errors.Unwrap(err))
+			klog.Errorf("AddToSet %s for %s:%s:%d failed with error: %v", set, proto, addr, port, errors.Unwrap(err))
 			return err
 		}
 		if errors.Is(err, unix.EEXIST) {
-			klog.Warningf("AddToSet for %s:%s:%d already exists", proto, addr, port)
+			klog.Warningf("AddToSet %s for %s:%s:%d already exists", set, proto, addr, port)
 			return nil
 		}
-		klog.Errorf("AddToSet for %s:%s:%d failed with error: %v", proto, addr, port, err)
+		klog.Errorf("AddToSet %s for %s:%s:%d failed with error: %v", set, proto, addr, port, err)
 		return err
 	}
 
@@ -410,14 +410,14 @@ func RemoveFromSet(nfti *NFTInterface, tableFamily nftables.TableFamily, proto v
 	if err = si.Sets().SetDelElements(set, se); err != nil {
 		if errors.Is(err, unix.EBUSY) {
 			// TODO Add logic to retry, for now just error out
-			klog.Warningf("entry for %s:%s:%d in set %s is busy, error: %v", proto, addr, port, errors.Unwrap(err))
+			klog.Errorf("RemoveFromSet %s for %s:%s:%d failed with error: %v", set, proto, addr, port, errors.Unwrap(err))
 			return err
 		}
 		if errors.Is(err, unix.ENOENT) {
-			klog.Warningf("entry for %s:%s:%d does not exist in set %s", proto, addr, port, set)
+			klog.Warningf("RemoveFromSet %s does not find entry for  %s:%s:%d", set, proto, addr, port)
 			return nil
 		}
-		klog.Errorf("failed to remove entry for %s:%s:%d from set %s with error: %v", proto, addr, port, set, errors.Unwrap(err))
+		klog.Errorf("RemoveFromSet %s for %s:%s:%d failed with error: %v", set, proto, addr, port, errors.Unwrap(err))
 		return err
 	}
 
@@ -443,14 +443,14 @@ func AddToNodeportSet(nfti *NFTInterface, tableFamily nftables.TableFamily, prot
 	if err = si.Sets().SetAddElements(K8sNodeportSet, se); err != nil {
 		// TODO Add logic to retry, for now just error out
 		if errors.Is(err, unix.EBUSY) {
-			klog.Warningf("AddToNodeportSet for port: %d failed with error: %v", port, errors.Unwrap(err))
+			klog.Errorf("AddToNodeportSet for %s:%d failed with error: %v", proto, port, errors.Unwrap(err))
 			return err
 		}
 		if errors.Is(err, unix.EEXIST) {
-			klog.Warningf("AddToNodeportSet for port: %d already exists", port)
+			klog.Warningf("AddToNodeportSet for %s:%d already exists", proto, port)
 			return nil
 		}
-		klog.Errorf("AddToNodeportSet for port: %dfailed with error: %v", port, err)
+		klog.Errorf("AddToNodeportSet for %s:%d failed with error: %v", proto, port, err)
 		return err
 	}
 
@@ -476,14 +476,14 @@ func RemoveFromNodeportSet(nfti *NFTInterface, tableFamily nftables.TableFamily,
 	if err = si.Sets().SetDelElements(K8sNodeportSet, se); err != nil {
 		// TODO Add logic to retry, for now just error out
 		if errors.Is(err, unix.EBUSY) {
-			klog.Warningf("RemoveFromNodeportSet for port: %d failed with error: %v", port, errors.Unwrap(err))
+			klog.Errorf("RemoveFromNodeportSet for %s:%d failed with error: %v", proto, port, errors.Unwrap(err))
 			return err
 		}
 		if errors.Is(err, unix.ENOENT) {
 			klog.Warningf("RemoveFromNodeportSet for %s:%d does not exist", proto, port)
 			return nil
 		}
-		klog.Errorf("RemoveFromNodeportSet for port: %d failed with error: %v", port, err)
+		klog.Errorf("RemoveFromNodeportSet for %s:%d failed with error: %v", proto, port, err)
 		return err
 	}
 

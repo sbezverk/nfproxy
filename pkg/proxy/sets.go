@@ -115,7 +115,11 @@ func (p *proxy) removeServicePortFromSets(servicePort ServicePort, tableFamily u
 			return err
 		}
 	}
+	// Nodeports are taken from the last known services object stored in cache
 	for _, nodePort := range storedSvc.Spec.Ports {
+		if nodePort.Port == 0 {
+			continue
+		}
 		klog.V(6).Infof(" removing Service port %s from NodePortSet, protocol: %s port: %d ", servicePort.String(), proto, port)
 		if err := nftables.RemoveFromNodeportSet(p.nfti, tableFamily, proto, uint16(nodePort.NodePort), nftables.K8sSvcPrefix+svcID); err != nil {
 			return err
