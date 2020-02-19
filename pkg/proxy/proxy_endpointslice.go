@@ -130,9 +130,9 @@ func (p *proxy) DeleteEndpointSlice(epsl *discovery.EndpointSlice) {
 func (p *proxy) UpdateEndpointSlice(epslOld, epslNew *discovery.EndpointSlice) {
 	s := time.Now()
 	defer klog.V(5).Infof("UpdateEndpointSlice for a EndpointSlice %s/%s ran for: %d nanoseconds", epslNew.Namespace, epslNew.Name, time.Since(s))
-	klog.V(5).Infof("UpdateEndpointSlice for a EndpointSlice %s/%s", epslNew.Namespace, epslNew.Name)
-	klog.V(6).Infof("Endpoints: %+v Ports: %+v Address type: %+v", epslNew.Endpoints, epslNew.Ports, epslNew.AddressType)
-
+	klog.V(5).Infof("UpdateEndpointSlice for a EndpointSlice %s/%s Address type: %+v", epslNew.Namespace, epslNew.Name, epslNew.AddressType)
+	klog.V(6).Infof("Endpoints Old: %+v Endpoints New: %+v", epslOld.Endpoints, epslNew.Endpoints)
+	klog.V(6).Infof("Ports Old: %+v Ports New: %+v", epslOld.Ports, epslNew.Ports)
 	var storedEpSl *discovery.EndpointSlice
 	ver, err := p.cache.getCachedEpSlVersion(epslNew.Name, epslNew.Namespace)
 	if err != nil {
