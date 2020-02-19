@@ -94,7 +94,7 @@ func (p *proxy) removeServicePortFromSets(servicePort ServicePort, tableFamily u
 	}
 	if extIPs := storedSvc.Spec.ExternalIPs; len(extIPs) != 0 {
 		for _, extIP := range extIPs {
-			klog.V(6).Infof(" removing Service port %s from External IP Set, external ip address: %s, protocol: %s port: %d ",
+			klog.V(6).Infof("removing Service port %s from External IP Set, external ip address: %s, protocol: %s port: %d ",
 				servicePort.String(), extIP, proto, port)
 			if err := nftables.RemoveFromSet(p.nfti, tableFamily, proto, extIP, port, nftables.K8sExternalIPSet, nftables.K8sSvcPrefix+svcID); err != nil {
 				return err
@@ -106,7 +106,7 @@ func (p *proxy) removeServicePortFromSets(servicePort ServicePort, tableFamily u
 	}
 	// Loadbalancer IP is taken from the last known services object stored in cache
 	for _, lbIP := range storedSvc.Status.LoadBalancer.Ingress {
-		klog.V(6).Infof(" removing Service port %s from LoadBalancer Set, loadbalancer ip address: %s, protocol: %s port: %d ",
+		klog.V(6).Infof("removing Service port %s from LoadBalancer Set, loadbalancer ip address: %s, protocol: %s port: %d ",
 			servicePort.String(), lbIP, proto, port)
 		if err := nftables.RemoveFromSet(p.nfti, tableFamily, proto, lbIP.IP, port, nftables.K8sLoadbalancerIPSet, nftables.K8sSvcPrefix+svcID); err != nil {
 			return err
@@ -117,10 +117,10 @@ func (p *proxy) removeServicePortFromSets(servicePort ServicePort, tableFamily u
 	}
 	// Nodeports are taken from the last known services object stored in cache
 	for _, nodePort := range storedSvc.Spec.Ports {
-		if nodePort.Port == 0 {
+		if nodePort.NodePort == 0 {
 			continue
 		}
-		klog.V(6).Infof(" removing Service port %s from NodePortSet, protocol: %s port: %d ", servicePort.String(), proto, port)
+		klog.V(6).Infof("removing Service port %s from NodePortSet, protocol: %s port: %d ", servicePort.String(), proto, nodePort.NodePort)
 		if err := nftables.RemoveFromNodeportSet(p.nfti, tableFamily, proto, uint16(nodePort.NodePort), nftables.K8sSvcPrefix+svcID); err != nil {
 			return err
 		}

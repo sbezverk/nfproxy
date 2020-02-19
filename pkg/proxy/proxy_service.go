@@ -204,7 +204,8 @@ func (p *proxy) UpdateService(svcOld, svcNew *v1.Service) {
 	s := time.Now()
 	defer klog.V(5).Infof("UpdateService for a service %s/%s ran for: %d nanoseconds", svcNew.Namespace, svcNew.Name, time.Since(s))
 	klog.V(5).Infof("UpdateService for a service %s/%s", svcNew.Namespace, svcNew.Name)
-	klog.V(6).Infof("UpdateService for a service Spec: %+v Status: %+v", svcNew.Spec, svcNew.Status)
+	klog.V(6).Infof("Spec Old: %+v Spec New: %+v", svcOld.Spec, svcNew.Spec)
+	klog.V(7).Infof("Status Old: %+v Status New: %+v", svcOld.Status, svcNew.Status)
 	// Check if the version of Last Known Service's version matches with svcOld version
 	// mismatch would indicate lost update.
 	var storedSvc *v1.Service
