@@ -516,6 +516,12 @@ func (p *proxy) processAffinityChange(svcNew *v1.Service, storedSvc *v1.Service)
 			svcID := svc.ServiceID
 			chain := nftables.K8sSvcPrefix + svcID
 			klog.V(5).Infof("Deleting service affinity map for port %s service ID: %s", svcPortName.String(), svcID)
+			if len(svc.Chains[tableFamily].Chain[chain].RuleID) < 2 {
+				klog.Errorf("failed to delete  MatchAct rule for port %s, rules slice's length is %d which is less than 2, it is a bug.", svcPortName.String(),
+					len(svc.Chains[tableFamily].Chain[chain].RuleID))
+				klog.Errorf("port %s, rules: %+v", svcPortName.String(), svc.Chains[tableFamily].Chain[chain].RuleID)
+				continue
+			}
 			// Deleting MatchAct rule to go back to round robin load balancing, MatchAct rule is stored in chain's RuleID slice
 			// by the index of 1, when Session Affinity is enabled.
 			id := svc.Chains[tableFamily].Chain[chain].RuleID[1]
@@ -526,8 +532,6 @@ func (p *proxy) processAffinityChange(svcNew *v1.Service, storedSvc *v1.Service)
 			// Rule removal succeeded, it is safe to remove MatchAct rule's handle from the chain's RuleID slice
 			var temp []uint64
 			temp = append(temp, svc.Chains[tableFamily].Chain[chain].RuleID[0])
-			temp = append(temp, svc.Chains[tableFamily].Chain[chain].RuleID[2:]...)
-			svc.Chains[tableFamily].Chain[chain].RuleID = temp
 			// Since ServicePort now has Service Affinity configuration removed, need to check if it has already Endpoints and if it is the case
 			// each Endpoint needs to have "Update" rule removed.
 			if svc.WithEndpoints {
@@ -536,6 +540,8 @@ func (p *proxy) processAffinityChange(svcNew *v1.Service, storedSvc *v1.Service)
 					klog.Errorf("failed to delete endpoint affinity update rule for port %s with error: %+v", svcPortName.String(), err)
 					continue
 				}
+				// Service Port chain has more than 2 rules if it has some endpoints, svc.WithEndpoints is true, hence adding then back to rules slice
+				temp = append(temp, svc.Chains[tableFamily].Chain[chain].RuleID[2:]...)
 			}
 			// There should be no more reference to Affinity map in any endpoints, it should be safe to delete it.
 			if err := nftables.DeleteServiceAffinityMap(p.nfti, tableFamily, svcID); err != nil {
@@ -543,6 +549,7 @@ func (p *proxy) processAffinityChange(svcNew *v1.Service, storedSvc *v1.Service)
 				continue
 			}
 			// Cleanup completed, marking Service Port as without Session Affinity
+			svc.Chains[tableFamily].Chain[chain].RuleID = temp
 			svc.WithAffinity = false
 		}
 	}
