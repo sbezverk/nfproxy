@@ -343,7 +343,7 @@ func (p *proxy) processClusterIPChanges(svcNew *v1.Service, storedSvc *v1.Servic
 			svc := p.serviceMap[svcPortName].(*serviceInfo).BaseServiceInfo.String()
 			svcID := servicePortSvcID(svcPortName.String(), string(servicePort.Protocol), svc)
 			nftables.AddToSet(p.nfti, tableFamily, servicePort.Protocol, addr, uint16(servicePort.Port), nftables.K8sClusterIPSet, nftables.K8sSvcPrefix+svcID)
-			nftables.AddToSet(p.nfti, tableFamily, servicePort.Protocol, addr, uint16(servicePort.Port), nftables.K8sMarkMasqSet, nftables.K8sNATDoMarkMasq)
+			//			nftables.AddToSet(p.nfti, tableFamily, servicePort.Protocol, addr, uint16(servicePort.Port), nftables.K8sMarkMasqSet, nftables.K8sNATDoMarkMasq)
 		}
 	}
 	if storedSvc.Spec.ClusterIP != "" {
@@ -358,7 +358,7 @@ func (p *proxy) processClusterIPChanges(svcNew *v1.Service, storedSvc *v1.Servic
 			svcBaseInfoString := p.serviceMap[svcPortName].(*serviceInfo).BaseServiceInfo.String()
 			svcID := servicePortSvcID(svcPortName.String(), string(servicePort.Protocol), svcBaseInfoString)
 			nftables.RemoveFromSet(p.nfti, tableFamily, servicePort.Protocol, addr, uint16(servicePort.Port), nftables.K8sClusterIPSet, nftables.K8sSvcPrefix+svcID)
-			nftables.RemoveFromSet(p.nfti, tableFamily, servicePort.Protocol, addr, uint16(servicePort.Port), nftables.K8sMarkMasqSet, nftables.K8sNATDoMarkMasq)
+			//			nftables.RemoveFromSet(p.nfti, tableFamily, servicePort.Protocol, addr, uint16(servicePort.Port), nftables.K8sMarkMasqSet, nftables.K8sNATDoMarkMasq)
 		}
 	}
 }
