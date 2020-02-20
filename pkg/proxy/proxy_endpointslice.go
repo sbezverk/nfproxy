@@ -25,7 +25,7 @@ import (
 	"k8s.io/klog"
 )
 
-func getServiceNameFromOwnerReference(labels map[string]string) (string, bool) {
+func getServiceNameFromServiceNameLabel(labels map[string]string) (string, bool) {
 	name, ok := labels[discovery.LabelServiceName]
 	if !ok {
 		return "", false
@@ -36,9 +36,9 @@ func getServiceNameFromOwnerReference(labels map[string]string) (string, bool) {
 
 func processEpSlice(epsl *discovery.EndpointSlice) ([]epInfo, error) {
 	var ports []epInfo
-	svcName, found := getServiceNameFromOwnerReference(epsl.ObjectMeta.Labels)
+	svcName, found := getServiceNameFromServiceNameLabel(epsl.ObjectMeta.Labels)
 	if !found {
-		// Slice does not have Service IN Owner References
+		// Slice does not have "kubernetes.io/service-name" label
 		return ports, nil
 	}
 	for _, e := range epsl.Endpoints {
@@ -47,7 +47,6 @@ func processEpSlice(epsl *discovery.EndpointSlice) ([]epInfo, error) {
 			if *p.Port == 0 {
 				return nil, fmt.Errorf("found invalid endpoint slice port %s", *p.Name)
 			}
-
 			svcPortName = getSvcPortName(svcName, epsl.Namespace, *p.Name, *p.Protocol)
 			for _, addr := range e.Addresses {
 				port := epInfo{
@@ -71,6 +70,9 @@ func processEpSlice(epsl *discovery.EndpointSlice) ([]epInfo, error) {
 				if p.Protocol != nil {
 					port.port.Protocol = *p.Protocol
 				}
+				if *e.Conditions.Ready {
+					port.ready = true
+				}
 				ports = append(ports, port)
 			}
 		}
@@ -93,7 +95,12 @@ func (p *proxy) AddEndpointSlice(epsl *discovery.EndpointSlice) {
 	}
 
 	for _, e := range info {
-		klog.V(5).Infof("adding Endpoint Slice %s/%s Service Port Name: %+v", epsl.Namespace, epsl.Name, e.name)
+		// Skipping not ready port, will program chains/rules once it becomes ready.
+		if !e.ready {
+			klog.V(5).Infof("Skip not Ready port %+v in Endpoint Slice %s/%s", e.port, epsl.Namespace, epsl.Name)
+			continue
+		}
+		klog.V(5).Infof("adding Endpoint Slice %s/%s port %+v", epsl.Namespace, epsl.Name, e.port)
 		if err := p.addEndpoint(e.name, e.addr, e.port); err != nil {
 			klog.Errorf("failed to add Endpoint Slice %s/%s port %+v with error: %+v", epsl.Namespace, epsl.Name, e.port, err)
 			return
@@ -112,6 +119,12 @@ func (p *proxy) DeleteEndpointSlice(epsl *discovery.EndpointSlice) {
 		return
 	}
 	for _, e := range info {
+		// Skip ping not ready port, all related chains/rules were either never created, if port has never been ready
+		// or during EndpointSlice update when port went from Ready to Not Ready.
+		if !e.ready {
+			klog.V(5).Infof("Skip not Ready port %+v in Endpoint Slice %s/%s", e.port, epsl.Namespace, epsl.Name)
+			continue
+		}
 		p.mu.Lock()
 		eps, ok := p.endpointsMap[e.name]
 		p.mu.Unlock()
@@ -147,6 +160,7 @@ func (p *proxy) UpdateEndpointSlice(epslOld, epslNew *discovery.EndpointSlice) {
 		}
 		storedEpSl, _ = p.cache.getLastKnownEpSlFromCache(epslNew.Name, epslNew.Namespace)
 	}
+
 	// Check for new Endpoint's ports, if found adding them into EndpointMap and corresponding programming rules.
 	info, err := processEpSlice(epslNew)
 	if err != nil {
@@ -154,25 +168,63 @@ func (p *proxy) UpdateEndpointSlice(epslOld, epslNew *discovery.EndpointSlice) {
 		return
 	}
 	for _, e := range info {
-		if !isPortInEndpointSlice(storedEpSl, e.port, e.addr) {
-			klog.V(5).Infof("updating Endpoint Slice %s/%s Service Port name: %+v", epslNew.Namespace, epslNew.Name, e.name)
+		oldReady, found := isPortInEndpointSlice(storedEpSl, e.port, e.addr)
+		if !found && e.ready {
+			// Case when port and address are not in the cache and new endpoint is in Ready state, so add new port
+			klog.V(5).Infof("adding Endpoint Slice %s/%s port: %+v", epslNew.Namespace, epslNew.Name, *e.port)
 			if err := p.addEndpoint(e.name, e.addr, e.port); err != nil {
 				klog.Errorf("failed to update Endpoint Slice %s/%s port %+v with error: %+v", epslNew.Namespace, epslNew.Name, *e.port, err)
-				return
 			}
+			continue
+		}
+		if !found && !e.ready {
+			// Case when port and address are not in the cache and new endpoint is NOT in Ready state, do nothing
+			continue
+		}
+		if found && e.ready && oldReady {
+			// Case when nothing changed for port and address pair, ignoring it
+			continue
+		}
+		if found && !e.ready && oldReady {
+			// Case when existing Endpoint state got changed from Ready to NOT Ready
+			p.mu.Lock()
+			eps, ok := p.endpointsMap[e.name]
+			p.mu.Unlock()
+			if !ok {
+				continue
+			}
+			klog.V(5).Infof("removing Endpoint Slice %s/%s port: %+v", epslNew.Namespace, epslNew.Name, *e.port)
+			if err := p.deleteEndpoint(e.name, e.addr, e.port, eps); err != nil {
+				klog.Errorf("failed to remove Endpoint Slice %s/%s port %+v with error: %+v", epslNew.Namespace, epslNew.Name, *e.port, err)
+			}
+			continue
+		}
+		if found && e.ready && !oldReady {
+			// Case when Endpoint for port and address pair changed state from NOT Ready to Ready, so add a new port
+			klog.V(5).Infof("adding Endpoint Slice %s/%s port: %+v", epslNew.Namespace, epslNew.Name, *e.port)
+			if err := p.addEndpoint(e.name, e.addr, e.port); err != nil {
+				klog.Errorf("failed to update Endpoint Slice %s/%s port %+v with error: %+v", epslNew.Namespace, epslNew.Name, *e.port, err)
+			}
+			continue
+		}
+		if found && !e.ready && !oldReady {
+			// Case when nothing changed for port and address pair, ignoring it
+			continue
 		}
 	}
 	// Check for removed endpoint's ports, if found, remvoing all entries from EndpointMap
 	info, _ = processEpSlice(storedEpSl)
 	for _, e := range info {
-		p.mu.Lock()
-		eps, ok := p.endpointsMap[e.name]
-		p.mu.Unlock()
-		if !ok {
-			continue
-		}
-		if !isPortInEndpointSlice(epslNew, e.port, e.addr) {
-			klog.V(5).Infof("removing Endpoint Slice %s/%s port %+v", epslNew.Namespace, epslNew.Name, *e.port)
+		_, found := isPortInEndpointSlice(epslNew, e.port, e.addr)
+		if !found && e.ready {
+			// Case when Endpoint for port/address was in Ready state but then was deleted
+			p.mu.Lock()
+			eps, ok := p.endpointsMap[e.name]
+			p.mu.Unlock()
+			if !ok {
+				continue
+			}
+			klog.V(5).Infof("removing Endpoint Slice %s/%s port: %+v", epslNew.Namespace, epslNew.Name, *e.port)
 			if err := p.deleteEndpoint(e.name, e.addr, e.port, eps); err != nil {
 				klog.Errorf("failed to remove Endpoint Slice %s/%s port %+v with error: %+v", epslNew.Namespace, epslNew.Name, *e.port, err)
 				continue
@@ -180,5 +232,4 @@ func (p *proxy) UpdateEndpointSlice(epslOld, epslNew *discovery.EndpointSlice) {
 		}
 	}
 	p.cache.storeEpSlInCache(epslNew)
-
 }
