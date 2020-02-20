@@ -97,17 +97,14 @@ The command line to run tests is the following:
 The current status is the following:
 
 ```
-Summarizing 2 Failures:
+Summarizing 1 Failure:
 
 [Fail] [sig-network] Services [It] should handle load balancer cleanup finalizer for service [Slow] 
-test/e2e/framework/service/wait.go:78
+test/e2e/framework/service/wait.go:79
 
-[Fail] [sig-network] EndpointSlice [Feature:EndpointSlice] version v1 [It] should create Endpoints and EndpointSlices for Pods matching a Service 
-test/e2e/network/endpointslice.go:358
-
-Ran 27 of 4846 Specs in 2140.038 seconds
-FAIL! -- 25 Passed | 2 Failed | 0 Pending | 4819 Skipped
---- FAIL: TestE2E (2140.06s)
+Ran 27 of 4845 Specs in 2032.845 seconds
+FAIL! -- 26 Passed | 1 Failed | 0 Pending | 4818 Skipped
+--- FAIL: TestE2E (2032.86s)
 
 ```
 

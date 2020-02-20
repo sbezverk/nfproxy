@@ -182,7 +182,8 @@ func isPortInSubset(subsets []v1.EndpointSubset, port *v1.EndpointPort, addr *v1
 	return false
 }
 
-func isPortInEndpointSlice(epsl *discovery.EndpointSlice, port *v1.EndpointPort, address *v1.EndpointAddress) bool {
+// isPortInEndpointSlice looks for address/port pair, if found it returns true for found and also the ready state of endpoint in the slice
+func isPortInEndpointSlice(epsl *discovery.EndpointSlice, port *v1.EndpointPort, address *v1.EndpointAddress) (bool, bool) {
 	for _, e := range epsl.Endpoints {
 		for _, p := range epsl.Ports {
 			checkName := ""
@@ -200,14 +201,14 @@ func isPortInEndpointSlice(epsl *discovery.EndpointSlice, port *v1.EndpointPort,
 			if checkName == port.Name && checkPort == port.Port && checkProto == port.Protocol {
 				for _, addr := range e.Addresses {
 					if strings.Compare(addr, address.IP) == 0 {
-						return true
+						return *e.Conditions.Ready, true
 					}
 				}
 			}
 		}
 	}
 
-	return false
+	return false, false
 }
 
 // isServicePortInPorts checks if specified ServicePort exists in provided ServicePort slice

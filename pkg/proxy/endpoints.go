@@ -32,9 +32,10 @@ import (
 // epInfo is used to carry a single processed instance of EP's information,
 // this struct is populated either from Endpoints or EndpointSlice object.
 type epInfo struct {
-	name ServicePortName
-	addr *v1.EndpointAddress
-	port *v1.EndpointPort
+	name  ServicePortName
+	addr  *v1.EndpointAddress
+	port  *v1.EndpointPort
+	ready bool
 }
 
 // BaseEndpointInfo contains base information that defines an endpoint.
