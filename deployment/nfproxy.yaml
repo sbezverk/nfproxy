@@ -100,26 +100,32 @@ spec:
     spec:
       serviceAccountName: nfproxy
       hostNetwork: true
+      priorityClassName: system-node-critical
+      tolerations:
+      - key: CriticalAddonsOnly
+        operator: Exists
+      - operator: Exists
       containers:
         - name: nfproxy
           image: docker.io/sbezverk/nfproxy-debug:0.0.0
           imagePullPolicy: Always
           securityContext:
             privileged: true
-          terminationMessagePath: /dev/termination-log
-          terminationMessagePolicy: File
           args:
             - --ipv4clustercidr
-            - "57.112.0.0/12"
+            - "57.48.0.0/12"
             - --ipv6clustercidr
             - ""
             - --v
             - "5"
           env:
-            - name: NFPROXY_IP
+            - name: API_PUBLIC_ENDPOINT
+              value: "{API Server public endpoint in format http://ipaddress:port for insecure or https://ipaddress:port for  }"
+            - name: HOST_IP
               valueFrom:
                 fieldRef:
-                  fieldPath: status.podIP
+                  fieldPath: status.hostIP
+
 metadata:
   name: nfproxy
   namespace: kube-system

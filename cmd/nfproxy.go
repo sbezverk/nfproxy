@@ -18,9 +18,13 @@ package main
 
 import (
 	"flag"
+	"math"
 	"math/rand"
+	"net"
+	"net/url"
 	"os"
 	"os/signal"
+	"strconv"
 	"syscall"
 	"time"
 
@@ -116,13 +120,45 @@ func main() {
 	host := os.Getenv("KUBERNETES_SERVICE_HOST")
 	port := os.Getenv("KUBERNETES_SERVICE_PORT")
 	if host != "" && port != "" {
-		extAddr := os.Getenv("NFPROXY_IP")
-		if extAddr == "" {
-			klog.Errorf("nfproxy in \"in-cluster\" more requires env variable \"NFPROXY_IP\" to be set to nfproxy pod's IP address")
+		strAddr := os.Getenv("API_PUBLIC_ENDPOINT")
+		if strAddr == "" {
+			klog.Errorf("nfproxy in \"in-cluster\" more requires env variable \"API_PUBLIC_ENDPOINT\" to be set to nfproxy pod's IP address")
 			os.Exit(1)
 		}
-		klog.Info("Programming bootstrap rule for kubernetes service.")
-		if err := proxy.BootstrapRules(nfproxy, host, extAddr, port, endpointSlice); err != nil {
+		// TODO, move to validtion func
+		endpoint, err := url.Parse(strAddr)
+		if err != nil {
+			klog.Errorf("nfproxy failed to parse api server endpoint with error: %+v", err)
+			os.Exit(1)
+		}
+		if endpoint.Scheme == "" {
+			if err != nil {
+				klog.Errorf("nfproxy failed to parse api server endpoint with error: %+v", err)
+				os.Exit(1)
+			}
+		}
+		ehost, eport, _ := net.SplitHostPort(endpoint.Host)
+		if host == "" || port == "" {
+			if err != nil {
+				klog.Errorf("nfproxy failed to parse api server endpoint with error: %+v", err)
+				os.Exit(1)
+			}
+		}
+		if net.ParseIP(ehost) == nil {
+			klog.Errorf("nfproxy failed to parse api server endpoint with error: %+v", err)
+			os.Exit(1)
+		}
+		np, err := strconv.Atoi(eport)
+		if err != nil {
+			klog.Errorf("nfproxy failed to parse api server endpoint with error: %+v", err)
+			os.Exit(1)
+		}
+		if np == 0 || np > math.MaxUint16 {
+			klog.Errorf("nfproxy failed to parse api server endpoint with error: %+v", err)
+			os.Exit(1)
+		}
+		klog.Infof("Programming bootstrap rule for kubernetes api endpoint: %+v", strAddr)
+		if err := proxy.BootstrapRules(nfproxy, host, port, endpoint, endpointSlice); err != nil {
 			klog.Errorf("nfproxy failed to add bootstrap rules with error: %+v", err)
 			os.Exit(1)
 		}
