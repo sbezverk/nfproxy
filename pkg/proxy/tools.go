@@ -19,6 +19,8 @@ package proxy
 import (
 	"crypto/sha256"
 	"encoding/base32"
+	"net"
+	"net/url"
 	"strconv"
 	"strings"
 
@@ -33,13 +35,15 @@ import (
 
 // BootstrapRules programs rules so the controller could reach API server
 // when it runs "in-cluster" mode.
-func BootstrapRules(p Proxy, host, extAddr string, port string, endpointSlice bool) error {
+func BootstrapRules(p Proxy, inHost, inPort string, extEndpoint *url.URL, endpointSlice bool) error {
 	// TODO (sbezverk) Consider adding ip address validation
-	pn, err := strconv.Atoi(port)
-	if err != nil {
-		return err
-	}
-	ipFamily, _ := getIPFamily(host)
+	extHost, extPort, _ := net.SplitHostPort(extEndpoint.Host)
+	epn, _ := strconv.Atoi(extPort)
+	e32p := int32(epn)
+	ipn, _ := strconv.Atoi(inPort)
+	i32p := int32(ipn)
+	ipFamily, _ := getIPFamily(inHost)
+
 	svc := v1.Service{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "kubernetes",
@@ -49,24 +53,23 @@ func BootstrapRules(p Proxy, host, extAddr string, port string, endpointSlice bo
 			IPFamily: &ipFamily,
 			Ports: []v1.ServicePort{
 				{
-					// TODO (sbezverk) What if it is not secured cluster?
-					Name:       "https",
-					Protocol:   v1.ProtocolTCP,
-					Port:       int32(pn),
-					TargetPort: intstr.FromString(port),
+					Name:     extEndpoint.Scheme,
+					Protocol: v1.ProtocolTCP,
+					// API Server's internal port number
+					Port:       i32p,
+					TargetPort: intstr.FromString(inPort),
 				},
 			},
 			Type:      v1.ServiceTypeClusterIP,
-			ClusterIP: host,
+			ClusterIP: inHost,
 		},
 	}
 	p.AddService(&svc)
 	if endpointSlice {
 		ready := true
-		name := "https"
+		name := extEndpoint.Scheme
 		proto := v1.ProtocolTCP
 		// Todo (sbezverk) must be passed as a parameter
-		i32port := int32(6443)
 		label := map[string]string{
 			discovery.LabelServiceName: "kubernetes",
 		}
@@ -78,7 +81,8 @@ func BootstrapRules(p Proxy, host, extAddr string, port string, endpointSlice bo
 			},
 			Endpoints: []discovery.Endpoint{
 				{
-					Addresses: []string{extAddr},
+					// External API server IP
+					Addresses: []string{extHost},
 					Conditions: discovery.EndpointConditions{
 						Ready: &ready,
 					},
@@ -88,7 +92,8 @@ func BootstrapRules(p Proxy, host, extAddr string, port string, endpointSlice bo
 				{
 					Name:     &name,
 					Protocol: &proto,
-					Port:     &i32port,
+					// External API server ports it listens on
+					Port: &e32p,
 				},
 			},
 		}
@@ -108,15 +113,14 @@ func BootstrapRules(p Proxy, host, extAddr string, port string, endpointSlice bo
 				{
 					Addresses: []v1.EndpointAddress{
 						{
-							IP: extAddr,
+							IP: extHost,
 						},
 					},
 					Ports: []v1.EndpointPort{
 						{
-							Name:     "https",
+							Name:     extEndpoint.Scheme,
 							Protocol: v1.ProtocolTCP,
-							// TODO (sbezverk) find a way to get this port from environment
-							Port: int32(6443),
+							Port:     e32p,
 						},
 					},
 				},

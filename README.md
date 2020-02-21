@@ -50,7 +50,7 @@ kubectl delete daemonset -n kube-system kube-proxy
 
 sudo iptabes -F -t nat
 
-sudo iptabes -F -t fiter
+sudo iptabes -F -t filter
 ```
 
 3. Modify nfproxy deployment yaml file to specify your cluster's CIDR and location of nfproxy image if not default
@@ -67,6 +67,18 @@ For your cluster's cidr range.
 - "X.Y.Z.0/L"
 ```
 Where *L* is length in bits of your cluster's cidr.
+
+Specify Api server public endpoint for **API_PUBLIC_ENDPOINT** variable, for example:
+```
+- name: API_PUBLIC_ENDPOINT
+  value: "https://192.168.80.221:6443"
+```
+
+To use EndpointSlice controller instead of Endpoints controller add:
+```
+- --endpointslice
+- "true"
+```
 
 4. Deploy nfproxy
 
@@ -96,6 +108,10 @@ The command line to run tests is the following:
 ```
 The current status is the following:
 
+**Single node deployment**
+
+A single test failure, not related to nfproxy functionallity.
+
 ```
 Summarizing 1 Failure:
 
@@ -108,10 +124,11 @@ FAIL! -- 26 Passed | 1 Failed | 0 Pending | 4818 Skipped
 
 ```
 
-The effort is underway to make nfproxy to pass all e2e tests. Help is welcome and much appreciated.
+**Multi nodes deployment**
 
-Please file an issue for any discovered error or broken functionality.
+Multiple tests failures. The effort is underway to make nfproxy to pass all e2e tests in multi nodes environment as well.
+Help is welcome and much appreciated.
 
-**NOTE:** It is WIP, please expect rather high volume of changes.
+**NOTE:** It is still WIP so major changes are still occuring.
 
 **Contributors, reviewers, testers are welcome!!!**
