@@ -101,16 +101,31 @@ kubectl delete -f ./deployment/nfproxy.yaml
 
 ## Status
 
-Each nfproxy's PR is tested against kubernetes sig-network's e2e testing framework. 
+**nfproxy** testing is done by running SIG-Network E2E tests in a 2 and 5 nodes clusters. 
 The command line to run tests is the following:
 ```
  ./bazel-bin/test/e2e/e2e.test  -ginkgo.focus="\[sig-network\].*Service" -kubeconfig={location of kubeconfig file} -dns-domain={cluster's domain name}
 ```
-The current status is the following:
+Below is the summary of results:
 
-**Single node deployment**
+**2 and 5 nodes clusters, Calico CNI, Endpoints Controller**
 
-A single test failure, not related to nfproxy functionallity.
+Summarizing 2 Failures:
+```
+[Fail] [sig-network] EndpointSlice [Feature:EndpointSlice] version v1 [It] should create Endpoints and EndpointSlices for Pods matching a Service 
+test/e2e/network/endpointslice.go:216
+
+[Fail] [sig-network] Services [It] should handle load balancer cleanup finalizer for service [Slow] 
+test/e2e/framework/service/wait.go:79
+
+Ran 28 of 4845 Specs in 2138.719 seconds
+FAIL! -- 26 Passed | 2 Failed | 0 Pending | 4817 Skipped
+```
+
+First failure is related to EndpointSlice controller being not enabled. 
+Second failure is not **nfproxy** related as it fails the same way in cases where nfproxy is not used. 
+
+**2 and 5 nodes clusters, Calico CNI, EndpointSlice Controller**
 
 ```
 Summarizing 1 Failure:
@@ -118,17 +133,11 @@ Summarizing 1 Failure:
 [Fail] [sig-network] Services [It] should handle load balancer cleanup finalizer for service [Slow] 
 test/e2e/framework/service/wait.go:79
 
-Ran 27 of 4845 Specs in 2032.845 seconds
-FAIL! -- 26 Passed | 1 Failed | 0 Pending | 4818 Skipped
---- FAIL: TestE2E (2032.86s)
-
+Ran 28 of 4845 Specs in 2042.535 seconds
+FAIL! -- 27 Passed | 1 Failed | 0 Pending | 4817 Skipped
+--- FAIL: TestE2E (2042.55s)
+FAIL
 ```
-
-**Multi nodes deployment**
-
-Multiple tests failures. The effort is underway to make nfproxy to pass all e2e tests in multi nodes environment as well.
-Help is welcome and much appreciated.
-
-**NOTE:** It is still WIP so major changes are still occuring.
+Failure is not **nfproxy** related as it fails the same way in cases where nfproxy is not used. 
 
 **Contributors, reviewers, testers are welcome!!!**

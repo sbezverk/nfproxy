@@ -274,11 +274,22 @@ func setupStaticNATRules(sets map[string]*nftables.Set, ci nftableslib.ChainsInt
 			Counter: &nftableslib.Counter{},
 		},
 		{
-			//			Meta: &nftableslib.Meta{
-			//				Mark: &nftableslib.MetaMark{
-			//					Value: 0x4000,
-			//				},
-			//			},
+			// If packets are source from the outside of the cluster range, then Masquerading is needed
+			L3: &nftableslib.L3Rule{
+				Src: &nftableslib.IPAddrSpec{
+					RelOp: nftableslib.NEQ,
+					List:  []*nftableslib.IPAddr{setIPAddr(cidr)},
+				},
+			},
+			Action: setActionVerdict(unix.NFT_JUMP, K8sNATDoMasquerade),
+		},
+		{
+			// If packet is explicitely requested to masqueraded, as in a case of a hairpin service
+			Meta: &nftableslib.Meta{
+				Mark: &nftableslib.MetaMark{
+					Value: 0x4000,
+				},
+			},
 			Action: setActionVerdict(unix.NFT_JUMP, K8sNATDoMasquerade),
 		},
 	}
