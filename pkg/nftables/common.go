@@ -34,7 +34,7 @@ const (
 	K8sFilterForward  = "k8s-filter-forward"
 	K8sFilterDoReject = "k8s-filter-do-reject"
 
-	NatPrerouting      = "nat-preroutin"
+	NatPrerouting      = "nat-prerouting"
 	NatOutput          = "nat-output"
 	NatPostrouting     = "nat-postrouting"
 	K8sNATMarkDrop     = "k8s-nat-mark-drop"
@@ -209,6 +209,13 @@ func setupStaticNATRules(sets map[string]*nftables.Set, ci nftableslib.ChainsInt
 		{
 			Counter: &nftableslib.Counter{},
 		},
+		// Log rule can be used for debugging purposes
+		//		{
+		//			Log: &nftableslib.Log{
+		//				Key:   unix.NFTA_LOG_LEVEL,
+		//				Value: []byte{0x0, 0x0, 0x0, 0x7},
+		//			},
+		//		},
 		{
 			// -A OUTPUT -m comment --comment "kubernetes service portals" -j KUBE-SERVICES
 			Action: setActionVerdict(unix.NFT_JUMP, K8sNATServices),
@@ -255,11 +262,6 @@ func setupStaticNATRules(sets map[string]*nftables.Set, ci nftableslib.ChainsInt
 			Counter: &nftableslib.Counter{},
 		},
 		{
-			// Log for debugging purposes
-			//			Log: &nftableslib.Log{
-			//				Key:   unix.NFTA_LOG_LEVEL,
-			//				Value: []byte{0x0, 0x0, 0x0, 0x7},
-			//			},
 			Action: masqAction,
 		},
 	}
@@ -272,6 +274,11 @@ func setupStaticNATRules(sets map[string]*nftables.Set, ci nftableslib.ChainsInt
 			Counter: &nftableslib.Counter{},
 		},
 		{
+			//			Meta: &nftableslib.Meta{
+			//				Mark: &nftableslib.MetaMark{
+			//					Value: 0x4000,
+			//				},
+			//			},
 			Action: setActionVerdict(unix.NFT_JUMP, K8sNATDoMasquerade),
 		},
 	}
