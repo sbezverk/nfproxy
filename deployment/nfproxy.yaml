@@ -62,17 +62,17 @@ rules:
     verbs:
       - watch
   - apiGroups:
-    - discovery.k8s.io
+      - discovery.k8s.io
     resources:
-    - endpointslices
+      - endpointslices
     verbs:
-    - list
+      - list
   - apiGroups:
-    - discovery.k8s.io
+      - discovery.k8s.io
     resources:
-    - endpointslices
+      - endpointslices
     verbs:
-    - watch
+      - watch
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
@@ -102,9 +102,14 @@ spec:
       hostNetwork: true
       priorityClassName: system-node-critical
       tolerations:
-      - key: CriticalAddonsOnly
-        operator: Exists
-      - operator: Exists
+        - key: CriticalAddonsOnly
+          operator: Exists
+        - operator: Exists
+      initContainers:
+        - name: filter-forward-policy
+          image: docker.io/sbezverk/nfproxy-iptables-fixup:0.0.0
+          securityContext:
+            privileged: true
       containers:
         - name: nfproxy
           image: docker.io/sbezverk/nfproxy-debug:0.0.0
@@ -121,11 +126,6 @@ spec:
           env:
             - name: API_PUBLIC_ENDPOINT
               value: "{API Server public endpoint in format http://ipaddress:port for insecure or https://ipaddress:port for  }"
-            - name: HOST_IP
-              valueFrom:
-                fieldRef:
-                  fieldPath: status.hostIP
-
 metadata:
   name: nfproxy
   namespace: kube-system
