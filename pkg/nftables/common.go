@@ -274,11 +274,12 @@ func setupStaticNATRules(sets map[string]*nftables.Set, ci nftableslib.ChainsInt
 			Counter: &nftableslib.Counter{},
 		},
 		{
-			//			Meta: &nftableslib.Meta{
-			//				Mark: &nftableslib.MetaMark{
-			//					Value: 0x4000,
-			//				},
-			//			},
+			L3: &nftableslib.L3Rule{
+				Src: &nftableslib.IPAddrSpec{
+					RelOp: nftableslib.NEQ,
+					List:  []*nftableslib.IPAddr{setIPAddr(cidr)},
+				},
+			},
 			Action: setActionVerdict(unix.NFT_JUMP, K8sNATDoMasquerade),
 		},
 	}
