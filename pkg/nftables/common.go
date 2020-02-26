@@ -198,7 +198,8 @@ func setupStaticNATRules(sets map[string]*nftables.Set, ci nftableslib.ChainsInt
 		},
 		{
 			// -A PREROUTING -m comment --comment "kubernetes service portals" -j KUBE-SERVICES
-			Action: setActionVerdict(unix.NFT_JUMP, K8sNATServices),
+			Action:   setActionVerdict(unix.NFT_JUMP, K8sNATServices),
+			UserData: nftableslib.MakeRuleComment("jump to kubernetes services portal"),
 		},
 	}
 	if _, err := programChainRules(ci, NatPrerouting, preroutingRules, 0); err != nil {
@@ -231,7 +232,8 @@ func setupStaticNATRules(sets map[string]*nftables.Set, ci nftableslib.ChainsInt
 		},
 		{
 			// -A POSTROUTING -m comment --comment "kubernetes postrouting rules" -j KUBE-POSTROUTING
-			Action: setActionVerdict(unix.NFT_JUMP, K8sNATPostrouting),
+			Action:   setActionVerdict(unix.NFT_JUMP, K8sNATPostrouting),
+			UserData: nftableslib.MakeRuleComment("jump kubernetes postrouting rules processing"),
 		},
 	}
 	if _, err := programChainRules(ci, NatPostrouting, postroutingRules, 0); err != nil {
@@ -290,7 +292,8 @@ func setupStaticNATRules(sets map[string]*nftables.Set, ci nftableslib.ChainsInt
 					Value: 0x4000,
 				},
 			},
-			Action: setActionVerdict(unix.NFT_JUMP, K8sNATDoMasquerade),
+			UserData: nftableslib.MakeRuleComment("masquerade marked packets"),
+			Action:   setActionVerdict(unix.NFT_JUMP, K8sNATDoMasquerade),
 		},
 	}
 	if _, err := programChainRules(ci, K8sNATPostrouting, k8sPostroutingRules, 0); err != nil {
@@ -377,7 +380,7 @@ func setupStaticNATRules(sets map[string]*nftables.Set, ci nftableslib.ChainsInt
 				FlagDADDR:      true,
 				Data:           []byte{unix.RTN_LOCAL},
 			},
-			UserData: []byte("kubernetes service nodeports; NOTE: this must be the last rule in this chain"),
+			UserData: nftableslib.MakeRuleComment("kubernetes service nodeports; this must be the last rule in this chain"),
 			Action:   setActionVerdict(unix.NFT_JUMP, K8sNATNodeports),
 		},
 	}
@@ -417,7 +420,8 @@ func setupStaticNATRules(sets map[string]*nftables.Set, ci nftableslib.ChainsInt
 					Value: 0x4000,
 				},
 			},
-			Action: setActionVerdict(unix.NFT_RETURN),
+			UserData: nftableslib.MakeRuleComment("mark packets for masquerading"),
+			Action:   setActionVerdict(unix.NFT_RETURN),
 		},
 	}
 	if _, err := programChainRules(ci, K8sNATDoMarkMasq, doMarkMasqRules, 0); err != nil {
@@ -535,7 +539,8 @@ func setupStaticFilterRules(ci nftableslib.ChainsInterface, clusterCIDR string) 
 					Value: 0x8000,
 				},
 			},
-			Action: setActionVerdict(nftableslib.NFT_DROP),
+			UserData: nftableslib.MakeRuleComment("kubernetes firewall for dropping marked packets"),
+			Action:   setActionVerdict(nftableslib.NFT_DROP),
 		},
 	}
 	// Programming rules for Filter Chain Firewall hook
@@ -580,7 +585,8 @@ func setupStaticFilterRules(ci nftableslib.ChainsInterface, clusterCIDR string) 
 					Value: binaryutil.BigEndian.PutUint32(nftableslib.CTStateRelated | nftableslib.CTStateEstablished),
 				},
 			},
-			Action: setActionVerdict(nftableslib.NFT_ACCEPT),
+			UserData: nftableslib.MakeRuleComment("kubernetes forwarding conntrack pod source rule"),
+			Action:   setActionVerdict(nftableslib.NFT_ACCEPT),
 		},
 		{
 			// -A KUBE-FORWARD -s 57.112.0.0/12 -m comment --comment "kubernetes forwarding conntrack pod source rule" -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
@@ -595,7 +601,8 @@ func setupStaticFilterRules(ci nftableslib.ChainsInterface, clusterCIDR string) 
 					Value: binaryutil.BigEndian.PutUint32(nftableslib.CTStateRelated | nftableslib.CTStateEstablished),
 				},
 			},
-			Action: setActionVerdict(nftableslib.NFT_ACCEPT),
+			UserData: nftableslib.MakeRuleComment("kubernetes forwarding conntrack pod destination rule"),
+			Action:   setActionVerdict(nftableslib.NFT_ACCEPT),
 		},
 	}
 	// Programming rules for Filter Chain Firewall hook
@@ -609,7 +616,8 @@ func setupStaticFilterRules(ci nftableslib.ChainsInterface, clusterCIDR string) 
 			Counter: &nftableslib.Counter{},
 		},
 		{
-			Action: rejectAction,
+			UserData: nftableslib.MakeRuleComment("kubernetes reject for services without endpoints"),
+			Action:   rejectAction,
 		},
 	}
 	// Programming rules for Filter Chain Firewall hook
