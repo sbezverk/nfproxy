@@ -137,7 +137,7 @@ func (p *proxy) addEndpointRules(epRule *nftables.EPRule, tableFamily utilnftabl
 		}
 		epRule.RuleID = ruleIDs
 	}
-	ruleIDs, err = nftables.AddEndpointRules(p.nfti, tableFamily, cn, key.ipaddr, key.proto, key.port)
+	ruleIDs, err = nftables.AddEndpointRules(p.nfti, tableFamily, cn, key.ipaddr, key.proto, key.port, epRule.ServiceID)
 	if err != nil {
 		return err
 	}
@@ -179,7 +179,7 @@ func (p *proxy) updateServiceChain(svcPortName ServicePortName, tableFamily util
 	svcRules := entry.svcnft.Chains[tableFamily].Chain[nftables.K8sSvcPrefix+entry.svcnft.ServiceID]
 	// Check if the service still has any backends
 	if len(epsChains) != 0 {
-		rules, err := nftables.ProgramServiceEndpoints(p.nfti, tableFamily, entry.svcnft.ServiceID, epsChains, svcRules.RuleID, entry.svcnft.WithAffinity)
+		rules, err := nftables.ProgramServiceEndpoints(p.nfti, tableFamily, entry.svcnft.ServiceID, epsChains, svcRules.RuleID, entry.svcnft.WithAffinity, svcPortName.String())
 		if err != nil {
 			klog.Errorf("failed to program endpoints rules for service %s with error: %+v", svcPortName.String(), err)
 			return err

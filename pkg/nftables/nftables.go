@@ -159,7 +159,7 @@ func getNFTInterface(ti nftableslib.TablesInterface) (*NFTInterface, error) {
 // AddEndpointRules defines function which creates new nftables chain, rule and
 // if successful return rule ID.
 func AddEndpointRules(nfti *NFTInterface, tableFamily nftables.TableFamily, chain string,
-	ipaddr string, proto v1.Protocol, port int32) ([]uint64, error) {
+	ipaddr string, proto v1.Protocol, port int32, serviceID string) ([]uint64, error) {
 	ci := ciForTableFamily(nfti, tableFamily)
 	dnat := &nftableslib.NATAttributes{
 		L3Addr:      [2]*nftableslib.IPAddr{setIPAddr(ipaddr)},
@@ -190,6 +190,9 @@ func AddEndpointRules(nfti *NFTInterface, tableFamily nftables.TableFamily, chai
 		{
 			Action: dnatAction,
 		},
+	}
+	if serviceID != "" {
+		rules[0].UserData = nftableslib.MakeRuleComment("endpoint for " + K8sSvcPrefix + serviceID)
 	}
 	if err := ci.Chains().CreateImm(chain, nil); err != nil {
 		return nil, fmt.Errorf("AddEndpointRules: ci.Chains().CreateImm exit with error: %+v", err)
@@ -514,7 +517,8 @@ func DeleteServiceChains(nfti *NFTInterface, tableFamily nftables.TableFamily, s
 
 // ProgramServiceEndpoints programms endpoints to the service chain, if multiple endpoint exists, endpoint rules
 // will be programmed for loadbalancing.
-func ProgramServiceEndpoints(nfti *NFTInterface, tableFamily nftables.TableFamily, svcID string, epchains []*EPRule, ruleID []uint64, withAffinity bool) ([]uint64, error) {
+func ProgramServiceEndpoints(nfti *NFTInterface, tableFamily nftables.TableFamily, svcID string, epchains []*EPRule, ruleID []uint64,
+	withAffinity bool, svcPortName string) ([]uint64, error) {
 	var id []uint64
 
 	chain := K8sSvcPrefix + svcID
@@ -526,7 +530,8 @@ func ProgramServiceEndpoints(nfti *NFTInterface, tableFamily nftables.TableFamil
 	}
 	rules := []nftableslib.Rule{
 		nftableslib.Rule{
-			Counter: &nftableslib.Counter{},
+			Counter:  &nftableslib.Counter{},
+			UserData: nftableslib.MakeRuleComment("service chain for Service Port Name " + svcPortName),
 		},
 	}
 	// If Service Port has Session Affinity then MatchAct rule must be inserted before normal load balancing rule.
