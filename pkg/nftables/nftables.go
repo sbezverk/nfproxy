@@ -360,6 +360,7 @@ func AddToSet(nfti *NFTInterface, tableFamily nftables.TableFamily, proto v1.Pro
 		si = nfti.SIv6
 		ipaddr = net.ParseIP(addr).To16()
 		dataType = nftables.TypeIP6Addr
+		klog.V(6).Infof("IPv6 Family is requested, address: [%s]", ipaddr)
 	}
 	se := []nftables.SetElement{}
 	ra := setActionVerdict(unix.NFT_JUMP, chain)

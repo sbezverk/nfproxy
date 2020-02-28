@@ -53,7 +53,7 @@ func (c *serviceController) handleAddService(obj interface{}) {
 		return
 	}
 	klog.V(5).Infof("service add event for %s/%s", svc.ObjectMeta.Namespace, svc.ObjectMeta.Name)
-	//	if svc.Name == "app2" {
+	//	if svc.Name == "centos-ipv6-1" {
 	c.proxy.AddService(svc)
 	//	}
 }
@@ -73,7 +73,7 @@ func (c *serviceController) handleUpdateService(oldObj, newObj interface{}) {
 		return
 	}
 	klog.V(5).Infof("service update event for %s/%s", svcNew.ObjectMeta.Namespace, svcNew.ObjectMeta.Name)
-	//	if svcNew.Name == "app2" {
+	//	if svcNew.Name == "centos-ipv6-1" {
 	c.proxy.UpdateService(svcOld, svcNew)
 	//	}
 }
@@ -92,7 +92,7 @@ func (c *serviceController) handleDeleteService(obj interface{}) {
 		}
 	}
 	klog.V(5).Infof("service delete event for %s/%s", svc.ObjectMeta.Namespace, svc.ObjectMeta.Name)
-	//	if svc.Name == "app2" {
+	//	if svc.Name == "centos-ipv6-1" {
 	c.proxy.DeleteService(svc)
 	//	}
 }
