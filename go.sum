@@ -244,6 +244,8 @@ github.com/google/nftables v0.0.0-20200122213939-26bcabf49086 h1:ekPOtyvH1xWCX5Q
 github.com/google/nftables v0.0.0-20200122213939-26bcabf49086/go.mod h1:cfspEyr/Ap+JDIITA+N9a0ernqG0qZ4W1aqMRgDZa1g=
 github.com/google/nftables v0.0.0-20200210101420-1c56a1906fbf h1:7LRYMcY5YBAZa9aoaIIvwS934JNbPyYmRy/JYZcL/XA=
 github.com/google/nftables v0.0.0-20200210101420-1c56a1906fbf/go.mod h1:cfspEyr/Ap+JDIITA+N9a0ernqG0qZ4W1aqMRgDZa1g=
+github.com/google/nftables v0.0.0-20200227072857-9caf4234bf8a h1:KiLSDEQZd/Dl06pGvusG45l5nVll9ZW011Aew4/2vBs=
+github.com/google/nftables v0.0.0-20200227072857-9caf4234bf8a/go.mod h1:cfspEyr/Ap+JDIITA+N9a0ernqG0qZ4W1aqMRgDZa1g=
 github.com/google/pprof v0.0.0-20181206194817-3ea8567a2e57/go.mod h1:zfwlbNMJ+OItoe0UupaVj+oy1omPYYDuagoSzA8v9mc=
 github.com/google/renameio v0.1.0/go.mod h1:KWCgfxg9yswjAJkECMjeO8J8rahYeXnNhOm40UhjYkI=
 github.com/google/uuid v1.0.0/go.mod h1:TIyPZe4MgqvfeYDBFedMoGGpEw/LqOeaOT+nhxU+yHo=
@@ -448,6 +450,8 @@ github.com/sbezverk/nftableslib v0.0.0-20200225173350-54d23f45e376 h1:OMPeGq0phR
 github.com/sbezverk/nftableslib v0.0.0-20200225173350-54d23f45e376/go.mod h1:oP6rAIy2AGF+GO8NKuxg5Dk5tG5QEjWtZOERDTxRedc=
 github.com/sbezverk/nftableslib v0.0.0-20200226133721-330c88b6df03 h1:pcYohMAJRsahaBuixuYcRe7V49Z5aQCzh2zSyl84a+g=
 github.com/sbezverk/nftableslib v0.0.0-20200226133721-330c88b6df03/go.mod h1:oP6rAIy2AGF+GO8NKuxg5Dk5tG5QEjWtZOERDTxRedc=
+github.com/sbezverk/nftableslib v0.0.0-20200228131025-c43f9ed7f1bf h1:blIJ5hi7qFEmZ8QtepHKb0+f2uvfWfLKFsq9gctDpYM=
+github.com/sbezverk/nftableslib v0.0.0-20200228131025-c43f9ed7f1bf/go.mod h1:oP6rAIy2AGF+GO8NKuxg5Dk5tG5QEjWtZOERDTxRedc=
 github.com/sbezverk/nftableslib/e2e/setenv v0.0.0-20191009154549-4fe065fe4e96/go.mod h1:eg/8FSK3bdB2DJRB5Cs8oIXtqYtF/KbMRwyuaZ13SG4=
 github.com/sbezverk/nftableslib/e2e/setenv v0.0.0-20191010164456-029e0d78cdb1/go.mod h1:Q7cQRSoGvFdscKripABhD9LwzMPI7nyH/W19KStrNEE=
 github.com/seccomp/libseccomp-golang v0.9.1/go.mod h1:GbW5+tmTXfcxTToHLXlScSlAvWlF4P2Ca7zGrPiEpWo=
