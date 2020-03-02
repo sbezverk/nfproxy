@@ -18,6 +18,7 @@ package main
 
 import (
 	"flag"
+	"fmt"
 	"math"
 	"math/rand"
 	"net"
@@ -117,48 +118,21 @@ func main() {
 	nfproxy := proxy.NewProxy(nfti, hostname, recorder, endpointSlice)
 	// For "in-cluster" mode a rule to reach API server must be programmed, otherwise
 	// the services/endpoints controller cannot reach it.
-	host := os.Getenv("KUBERNETES_SERVICE_HOST")
-	port := os.Getenv("KUBERNETES_SERVICE_PORT")
-	if host != "" && port != "" {
+	iHost := os.Getenv("KUBERNETES_SERVICE_HOST")
+	iPort := os.Getenv("KUBERNETES_SERVICE_PORT")
+	if iHost != "" && iPort != "" {
 		strAddr := os.Getenv("API_PUBLIC_ENDPOINT")
 		if strAddr == "" {
 			klog.Errorf("nfproxy in \"in-cluster\" more requires env variable \"API_PUBLIC_ENDPOINT\" to be set to nfproxy pod's IP address")
 			os.Exit(1)
 		}
-		// TODO, move to validtion func
-		endpoint, err := url.Parse(strAddr)
+		endpoint, err := validateAPIEndpoint(strAddr)
 		if err != nil {
-			klog.Errorf("nfproxy failed to parse api server endpoint with error: %+v", err)
-			os.Exit(1)
-		}
-		if endpoint.Scheme == "" {
-			if err != nil {
-				klog.Errorf("nfproxy failed to parse api server endpoint with error: %+v", err)
-				os.Exit(1)
-			}
-		}
-		ehost, eport, _ := net.SplitHostPort(endpoint.Host)
-		if host == "" || port == "" {
-			if err != nil {
-				klog.Errorf("nfproxy failed to parse api server endpoint with error: %+v", err)
-				os.Exit(1)
-			}
-		}
-		if net.ParseIP(ehost) == nil {
-			klog.Errorf("nfproxy failed to parse api server endpoint with error: %+v", err)
-			os.Exit(1)
-		}
-		np, err := strconv.Atoi(eport)
-		if err != nil {
-			klog.Errorf("nfproxy failed to parse api server endpoint with error: %+v", err)
-			os.Exit(1)
-		}
-		if np == 0 || np > math.MaxUint16 {
-			klog.Errorf("nfproxy failed to parse api server endpoint with error: %+v", err)
+			klog.Errorf("nfproxy failed to validate api endpoint %s with error: %+v", strAddr, err)
 			os.Exit(1)
 		}
 		klog.Infof("Programming bootstrap rule for kubernetes api endpoint: %+v", strAddr)
-		if err := proxy.BootstrapRules(nfproxy, host, port, endpoint, endpointSlice); err != nil {
+		if err := proxy.BootstrapRules(nfproxy, iHost, iPort, endpoint, endpointSlice); err != nil {
 			klog.Errorf("nfproxy failed to add bootstrap rules with error: %+v", err)
 			os.Exit(1)
 		}
@@ -191,4 +165,26 @@ func main() {
 	klog.Info("Received stop signal, shuting down controller")
 
 	os.Exit(0)
+}
+
+func validateAPIEndpoint(strAddr string) (*url.URL, error) {
+	endpoint, err := url.Parse(strAddr)
+	if err != nil {
+		return nil, fmt.Errorf("nfproxy failed to parse api server endpoint with error: %w", err)
+
+	}
+	host, port, _ := net.SplitHostPort(endpoint.Host)
+	if net.ParseIP(host) == nil {
+		return nil, fmt.Errorf("failed to parse api ip address")
+
+	}
+	np, err := strconv.Atoi(port)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse port with error: %w", err)
+
+	}
+	if np == 0 || np > math.MaxUint16 {
+		return nil, fmt.Errorf("invalid port")
+	}
+	return endpoint, nil
 }
