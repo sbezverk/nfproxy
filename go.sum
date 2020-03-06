@@ -246,6 +246,8 @@ github.com/google/nftables v0.0.0-20200210101420-1c56a1906fbf h1:7LRYMcY5YBAZa9a
 github.com/google/nftables v0.0.0-20200210101420-1c56a1906fbf/go.mod h1:cfspEyr/Ap+JDIITA+N9a0ernqG0qZ4W1aqMRgDZa1g=
 github.com/google/nftables v0.0.0-20200227072857-9caf4234bf8a h1:KiLSDEQZd/Dl06pGvusG45l5nVll9ZW011Aew4/2vBs=
 github.com/google/nftables v0.0.0-20200227072857-9caf4234bf8a/go.mod h1:cfspEyr/Ap+JDIITA+N9a0ernqG0qZ4W1aqMRgDZa1g=
+github.com/google/nftables v0.0.0-20200306103218-21c5c5c4256e h1:b8NG69b0UksUGVX4lryC1UHGIOmVD6qd6MX9NwM8Nw4=
+github.com/google/nftables v0.0.0-20200306103218-21c5c5c4256e/go.mod h1:cfspEyr/Ap+JDIITA+N9a0ernqG0qZ4W1aqMRgDZa1g=
 github.com/google/pprof v0.0.0-20181206194817-3ea8567a2e57/go.mod h1:zfwlbNMJ+OItoe0UupaVj+oy1omPYYDuagoSzA8v9mc=
 github.com/google/renameio v0.1.0/go.mod h1:KWCgfxg9yswjAJkECMjeO8J8rahYeXnNhOm40UhjYkI=
 github.com/google/uuid v1.0.0/go.mod h1:TIyPZe4MgqvfeYDBFedMoGGpEw/LqOeaOT+nhxU+yHo=

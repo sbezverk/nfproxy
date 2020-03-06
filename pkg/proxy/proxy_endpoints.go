@@ -20,6 +20,8 @@ import (
 	"fmt"
 	"time"
 
+	utilnftables "github.com/google/nftables"
+	"github.com/sbezverk/nfproxy/pkg/nftables"
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/klog"
 )
@@ -35,7 +37,6 @@ func (p *proxy) AddEndpoints(ep *v1.Endpoints) {
 	defer klog.V(5).Infof("AddEndpoints for %s/%s ran for: %d nanoseconds", ep.Namespace, ep.Name, time.Since(s))
 	p.cache.storeEpInCache(ep)
 	klog.V(5).Infof("Add endpoint: %s/%s", ep.Namespace, ep.Name)
-	//	p.UpdateEndpoints(&v1.Endpoints{Subsets: []v1.EndpointSubset{}}, ep)
 	info, err := processEpSubsets(ep)
 	if err != nil {
 		klog.Errorf("failed to add Endpoint %s/%s with error: %+v", ep.Namespace, ep.Name, err)
@@ -48,6 +49,46 @@ func (p *proxy) AddEndpoints(ep *v1.Endpoints) {
 			return
 		}
 	}
+}
+
+func (p *proxy) addEndpoint(svcPortName ServicePortName, addr *v1.EndpointAddress, port *v1.EndpointPort) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	isLocal := addr.NodeName != nil && *addr.NodeName == p.hostname
+	ipFamily, ipTableFamily := getIPFamily(addr.IP)
+	baseEndpointInfo := newBaseEndpointInfo(ipFamily, port.Protocol, addr.IP, int(port.Port), isLocal, nil)
+	// Adding to endpoint base information, structures to carry nftables related info
+	baseEndpointInfo.epnft = &nftables.EPnft{
+		Interface: p.nfti,
+		Rule:      make(map[utilnftables.TableFamily]*nftables.EPRule),
+	}
+	cn := servicePortEndpointChainName(svcPortName.String(), string(port.Protocol), baseEndpointInfo.Endpoint)
+	// Initializing ip table family depending on endpoint's family ipv4 or ipv6
+	epRule := nftables.EPRule{
+		EpIndex: len(p.endpointsMap[svcPortName]),
+	}
+	epRule.Chain = cn
+	// RuleID nil is indicator that the nftables rule has not been yet programmed, once it is programed
+	// RuleID will be updated to real value.
+	epRule.RuleID = nil
+	// Check if corresponding ServicePort has Service Affinity set and copy parameters to endpoint rule struct
+	epRule.WithAffinity = false
+	if svc, ok := p.serviceMap[svcPortName]; ok {
+		epRule.WithAffinity = svc.(*serviceInfo).svcnft.WithAffinity
+		epRule.MaxAgeSeconds = svc.(*serviceInfo).svcnft.MaxAgeSeconds
+		epRule.ServiceID = svc.(*serviceInfo).svcnft.ServiceID
+	}
+	baseEndpointInfo.epnft.Rule[ipTableFamily] = &epRule
+	if err := p.addEndpointRules(&epRule, ipTableFamily, cn, svcPortName, &epKey{port.Protocol, addr.IP, port.Port}); err != nil {
+		klog.Errorf("failed to add endpoint rules for Service Port Name: %+v with error: %+v", svcPortName, err)
+		return err
+	}
+	p.endpointsMap[svcPortName] = append(p.endpointsMap[svcPortName], newEndpointInfo(baseEndpointInfo, port.Protocol))
+	if err := p.updateServiceChain(svcPortName, ipTableFamily); err != nil {
+		klog.Errorf("failed to update service %s chain with endpoint rule with error: %+v", svcPortName.String(), err)
+		return err
+	}
+	return nil
 }
 
 func (p *proxy) DeleteEndpoints(ep *v1.Endpoints) {
@@ -105,6 +146,24 @@ func (p *proxy) deleteEndpoint(svcPortName ServicePortName, addr *v1.EndpointAdd
 		}
 	}
 
+	return nil
+}
+
+func (p *proxy) deleteEndpointRules(ipTableFamily utilnftables.TableFamily, cn string, ruleID []uint64, svcPortName ServicePortName, key *epKey) error {
+	if err := nftables.DeleteEndpointRules(p.nfti, ipTableFamily, cn, ruleID); err != nil {
+		return err
+	}
+	// Deleting endpoint's chain
+	if err := nftables.DeleteChain(p.nfti, ipTableFamily, cn); err != nil {
+		klog.Errorf("failed to delete endpoint chain: %s with error: %+v", cn, err)
+		return err
+	}
+	// Check if it was last endpoint for a service port name
+	if len(p.endpointsMap[svcPortName]) == 0 {
+		klog.V(5).Infof("no more endpoints found for %s", svcPortName.String())
+		// No endpoints for svcPortName key is available, need to add svcPortName to No Endpoint Set
+		delete(p.endpointsMap, svcPortName)
+	}
 	return nil
 }
 
