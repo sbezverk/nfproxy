@@ -37,7 +37,7 @@ func (p *proxy) AddService(svc *v1.Service) {
 	if svc == nil {
 		return
 	}
-	klog.V(6).Infof("AddService for a service Spec: %+v Status: %+v", svc.Spec, svc.Status)
+	klog.V(6).Infof("AddService for a service Spec: %+v Status: %+v Address Family: %v", svc.Spec, svc.Status, *svc.Spec.IPFamily)
 	if svc.Spec.SessionAffinity == v1.ServiceAffinityClientIP {
 		stickySeconds := int(*svc.Spec.SessionAffinityConfig.ClientIP.TimeoutSeconds)
 		klog.V(5).Infof("Service %s/%s has SessionAffinity set for %d seconds", svc.Namespace, svc.Name, stickySeconds)
