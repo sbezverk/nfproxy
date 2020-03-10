@@ -26,7 +26,6 @@ To build nfproxy binary execute:
 
 ```
 make nfproxy
-
 ```
 Resulting binary will be placed in *./bin* folder.
 
@@ -48,9 +47,9 @@ this yaml will allow you to restore the default kube-proxy functionality.
 ```
 kubectl delete daemonset -n kube-system kube-proxy
 
-sudo iptabes -F -t nat
+sudo iptables -F -t nat
 
-sudo iptabes -F -t filter
+sudo iptables -F -t filter
 ```
 
 3. Modify nfproxy deployment yaml file to specify your cluster's CIDR and location of nfproxy image if not default
