@@ -148,7 +148,15 @@ func main() {
 		klog.Fatalf("Failed to create Requirement for noHeadlessEndpoints: %s", err.Error())
 	}
 	labelSelector := labels.NewSelector()
-	labelSelector = labelSelector.Add(*noHeadlessEndpoints)
+	if serviceProxyName == "" {
+		labelSelector = labelSelector.Add(*noHeadlessEndpoints)
+	} else {
+		proxySelector, err := labels.NewRequirement("service.kubernetes.io/service-proxy-name", selection.DoubleEquals, []string{serviceProxyName})
+		if err != nil {
+			klog.Fatalf("Failed to create Requirement for noHeadlessEndpoints: %s", err.Error())
+		}
+		labelSelector = labelSelector.Add(*noHeadlessEndpoints, *proxySelector)
+	}
 
 	kubeInformerFactory := kubeinformers.NewSharedInformerFactoryWithOptions(client, time.Minute*10,
 		kubeinformers.WithTweakListOptions(func(options *metav1.ListOptions) {
