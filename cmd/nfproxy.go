@@ -36,6 +36,9 @@ import (
 	"github.com/sbezverk/nfproxy/pkg/nftables"
 	"github.com/sbezverk/nfproxy/pkg/proxy"
 	v1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/labels"
+	"k8s.io/apimachinery/pkg/selection"
 	"k8s.io/apimachinery/pkg/util/wait"
 	kubeinformers "k8s.io/client-go/informers"
 	"k8s.io/client-go/kubernetes/scheme"
@@ -138,7 +141,17 @@ func main() {
 		}
 	}
 
-	kubeInformerFactory := kubeinformers.NewSharedInformerFactory(client, time.Minute*10)
+	noHeadlessEndpoints, err := labels.NewRequirement(v1.IsHeadlessService, selection.DoesNotExist, nil)
+	if err != nil {
+		klog.Fatalf("Failed to create Requirement for noHeadlessEndpoints: %s", err.Error())
+	}
+	labelSelector := labels.NewSelector()
+	labelSelector = labelSelector.Add(*noHeadlessEndpoints)
+
+	kubeInformerFactory := kubeinformers.NewSharedInformerFactoryWithOptions(client, time.Minute*10,
+		kubeinformers.WithTweakListOptions(func(options *metav1.ListOptions) {
+			options.LabelSelector = labelSelector.String()
+		}))
 
 	svcController := controller.NewServiceController(nfproxy, client, kubeInformerFactory.Core().V1().Services())
 
