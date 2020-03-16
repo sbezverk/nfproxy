@@ -49,10 +49,11 @@ import (
 )
 
 var (
-	kubeconfig      string
-	ipv4ClusterCIDR string
-	ipv6ClusterCIDR string
-	endpointSlice   bool
+	kubeconfig       string
+	ipv4ClusterCIDR  string
+	ipv6ClusterCIDR  string
+	serviceProxyName string
+	endpointSlice    bool
 )
 
 type epController interface {
@@ -63,6 +64,7 @@ func init() {
 	flag.StringVar(&kubeconfig, "kubeconfig", "", "Absolute path to the kubeconfig file.")
 	flag.StringVar(&ipv4ClusterCIDR, "ipv4clustercidr", "", "The IPv4 CIDR range of pods in the cluster.")
 	flag.StringVar(&ipv6ClusterCIDR, "ipv6clustercidr", "", "The IPv6 CIDR range of pods in the cluster.")
+	flag.StringVar(&serviceProxyName, "service-proxy-name", "", "Let nfproxy only handle services with this label (empty = all services)")
 	flag.BoolVar(&endpointSlice, "endpointslice", false, "Enables to use EndpointSlice instead of Endpoints. Default is flase.")
 }
 
