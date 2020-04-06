@@ -39,6 +39,17 @@ This command will compile nfproxy binary and then will build a docker container 
 
 ## Deployment
 
+`Nfproxy` can be deployed in two ways;
+
+* Replace the Kubernetes `kube-proxy`. All services will be served by `nfproxy`
+
+* Install `nfproxy` and select which services that shall be served by `nfproxy` using the label `service.kubernetes.io/service-proxy-name: nfproxy`. The K8s installation (kube-proxy) is not altered.
+
+
+
+### Replace kube-proxy
+
+
 1. Find a way to save kube-proxy's daemonset yaml, once you tired of playing with nfproxy,
 this yaml will allow you to restore the default kube-proxy functionality.
 
@@ -97,6 +108,32 @@ If nfproxy started successfully, pod's log will contain messages about discovere
 ```
 kubectl delete -f ./deployment/nfproxy.yaml
 ```
+
+### Select nfproxy with a label
+
+`Nfproxy` is installed as any application and will only be used for services that explicitly request it. Example;
+
+```
+apiVersion: v1
+kind: Service
+metadata:
+  name: my-service
+  labels:
+    service.kubernetes.io/service-proxy-name: nfproxy
+spec:
+  ipFamily: IPv4
+  selector:
+    app: some-http-server
+  ports:
+  - port: 80
+  type: LoadBalancer
+```
+
+The `service.kubernetes.io/service-proxy-name` will make the `kube-proxy` ignore the service. Instead `nfproxy` watches services with this label an will setup nftables for load balancing.
+
+Deployment follows the same steps as when `kube-proxy` is replaced minus the removal of `kube-proxy` (obviously). Perform the steps from **3** above but use `./deployment/nfproxy-label-select.yaml` instead.
+
+
 
 ## Status
 
