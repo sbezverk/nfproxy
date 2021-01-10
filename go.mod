@@ -1,6 +1,6 @@
 module github.com/sbezverk/nfproxy
 
-go 1.13
+go 1.15
 
 require (
 	github.com/google/nftables v0.0.0-20200316075819-7127d9d22474

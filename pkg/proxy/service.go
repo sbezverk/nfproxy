@@ -35,7 +35,7 @@ import (
 type BaseServiceInfo struct {
 	svcName                  string
 	svcNamespace             string
-	ipFamily                 v1.IPFamily
+	ipFamilies               []v1.IPFamily
 	clusterIP                net.IP
 	port                     int
 	protocol                 v1.Protocol
@@ -55,7 +55,14 @@ var _ ServicePort = &BaseServiceInfo{}
 
 // String is part of ServicePort interface.
 func (info *BaseServiceInfo) String() string {
-	return fmt.Sprintf("%s:%s:%d/%s", info.ipFamily, info.clusterIP, info.port, info.protocol)
+	ipFamilies := "IPv4"
+	if info.ipFamilies != nil {
+		ipFamilies = string(info.ipFamilies[0])
+	}
+	if len(info.ipFamilies) >= 1 {
+		ipFamilies = "Dual"
+	}
+	return fmt.Sprintf("%s:%s:%d/%s", ipFamilies, info.clusterIP, info.port, info.protocol)
 }
 
 // ClusterIP is part of ServicePort interface.
@@ -168,10 +175,11 @@ func newBaseServiceInfo(port *v1.ServicePort, service *v1.Service) *BaseServiceI
 		//		topologyKeys:           service.Spec.TopologyKeys,
 		svcnft: &nftables.SVCnft{},
 	}
-	if service.Spec.IPFamily != nil {
-		info.ipFamily = *service.Spec.IPFamily
+	if service.Spec.IPFamilies != nil {
+		info.ipFamilies = service.Spec.IPFamilies
 	} else {
-		info.ipFamily = v1.IPv4Protocol
+		info.ipFamilies = make([]v1.IPFamily, 1)
+		info.ipFamilies[0] = v1.IPv4Protocol
 	}
 
 	info.externalIPs = make([]string, len(service.Spec.ExternalIPs))

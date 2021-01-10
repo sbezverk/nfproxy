@@ -50,7 +50,7 @@ func BootstrapRules(p Proxy, inHost, inPort string, extEndpoint *url.URL, endpoi
 			Namespace: "default",
 		},
 		Spec: v1.ServiceSpec{
-			IPFamily: &ipFamily,
+			IPFamilies: []v1.IPFamily{ipFamily},
 			Ports: []v1.ServicePort{
 				{
 					Name:     extEndpoint.Scheme,

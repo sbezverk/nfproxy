@@ -22,7 +22,6 @@ import (
 	utilnftables "github.com/google/nftables"
 	"github.com/sbezverk/nfproxy/pkg/nftables"
 	v1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/klog"
 	utilproxy "k8s.io/kubernetes/pkg/proxy/util"
 	utilnet "k8s.io/utils/net"
@@ -44,8 +43,8 @@ func (p *proxy) AddService(svc *v1.Service) {
 		stickySeconds := int(*svc.Spec.SessionAffinityConfig.ClientIP.TimeoutSeconds)
 		klog.V(5).Infof("Service %s/%s has SessionAffinity set for %d seconds", svc.Namespace, svc.Name, stickySeconds)
 	}
-	svcName := types.NamespacedName{Namespace: svc.Namespace, Name: svc.Name}
-	if utilproxy.ShouldSkipService(svcName, svc) {
+	//	svcName := types.NamespacedName{Namespace: svc.Namespace, Name: svc.Name}
+	if utilproxy.ShouldSkipService(svc) {
 		return
 	}
 	for i := range svc.Spec.Ports {
