@@ -78,6 +78,7 @@ func setIPAddr(addr string) *nftableslib.IPAddr {
 }
 
 func setupNFProxyChains(ci nftableslib.ChainsInterface) error {
+	accept := nftableslib.ChainPolicyAccept
 	// nat type chains
 	natChains := []struct {
 		name  string
@@ -89,7 +90,7 @@ func setupNFProxyChains(ci nftableslib.ChainsInterface) error {
 				Type:     nftables.ChainTypeFilter,
 				Priority: 0,
 				Hook:     nftables.ChainHookInput,
-				Policy:   nftableslib.ChainPolicyAccept,
+				Policy:   &accept,
 			},
 		},
 		{
@@ -98,7 +99,7 @@ func setupNFProxyChains(ci nftableslib.ChainsInterface) error {
 				Type:     nftables.ChainTypeFilter,
 				Priority: 0,
 				Hook:     nftables.ChainHookOutput,
-				Policy:   nftableslib.ChainPolicyAccept,
+				Policy:   &accept,
 			},
 		},
 		{
@@ -107,7 +108,7 @@ func setupNFProxyChains(ci nftableslib.ChainsInterface) error {
 				Type:     nftables.ChainTypeFilter,
 				Priority: 0,
 				Hook:     nftables.ChainHookForward,
-				Policy:   nftableslib.ChainPolicyAccept,
+				Policy:   &accept,
 			},
 		},
 		{
@@ -132,7 +133,7 @@ func setupNFProxyChains(ci nftableslib.ChainsInterface) error {
 				Type:     nftables.ChainTypeNAT,
 				Priority: 0,
 				Hook:     nftables.ChainHookPrerouting,
-				Policy:   nftableslib.ChainPolicyAccept,
+				Policy:   &accept,
 			},
 		},
 		{
@@ -141,7 +142,7 @@ func setupNFProxyChains(ci nftableslib.ChainsInterface) error {
 				Type:     nftables.ChainTypeNAT,
 				Priority: 0,
 				Hook:     nftables.ChainHookOutput,
-				Policy:   nftableslib.ChainPolicyAccept,
+				Policy:   &accept,
 			},
 		},
 		{
@@ -150,7 +151,7 @@ func setupNFProxyChains(ci nftableslib.ChainsInterface) error {
 				Type:     nftables.ChainTypeNAT,
 				Priority: 0,
 				Hook:     nftables.ChainHookPostrouting,
-				Policy:   nftableslib.ChainPolicyAccept,
+				Policy:   &accept,
 			},
 		},
 		{
@@ -250,6 +251,7 @@ func setupStaticNATRules(sets map[string]*nftables.Set, ci nftableslib.ChainsInt
 				Mark: &nftableslib.MetaMark{
 					Set:   true,
 					Value: 0x8000,
+					Mask:  0x8000,
 				},
 			},
 		},
@@ -290,6 +292,7 @@ func setupStaticNATRules(sets map[string]*nftables.Set, ci nftableslib.ChainsInt
 			Meta: &nftableslib.Meta{
 				Mark: &nftableslib.MetaMark{
 					Value: 0x4000,
+					Mask:  0x4000,
 				},
 			},
 			UserData: nftableslib.MakeRuleComment("masquerade marked packets"),
@@ -418,6 +421,7 @@ func setupStaticNATRules(sets map[string]*nftables.Set, ci nftableslib.ChainsInt
 				Mark: &nftableslib.MetaMark{
 					Set:   true,
 					Value: 0x4000,
+					Mask:  0x4000,
 				},
 			},
 			UserData: nftableslib.MakeRuleComment("mark packets for masquerading"),
@@ -537,6 +541,7 @@ func setupStaticFilterRules(ci nftableslib.ChainsInterface, clusterCIDR string) 
 				Mark: &nftableslib.MetaMark{
 					Set:   false,
 					Value: 0x8000,
+					Mask:  0x8000,
 				},
 			},
 			UserData: nftableslib.MakeRuleComment("kubernetes firewall for dropping marked packets"),
@@ -568,6 +573,7 @@ func setupStaticFilterRules(ci nftableslib.ChainsInterface, clusterCIDR string) 
 				Mark: &nftableslib.MetaMark{
 					Set:   false,
 					Value: 0x4000,
+					Mask:  0x4000,
 				},
 			},
 			Action: setActionVerdict(nftableslib.NFT_ACCEPT),
