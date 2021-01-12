@@ -4,7 +4,7 @@ go 1.13
 
 require (
 	github.com/google/nftables v0.0.0-20200316075819-7127d9d22474
-	github.com/sbezverk/nftableslib v0.0.0-20200402150358-c20bed91f482
+	github.com/sbezverk/nftableslib v0.0.0-20210111145735-b08b2d804e1f
 	golang.org/x/oauth2 v0.0.0-20200107190931-bf48bf16ab8d // indirect
 	golang.org/x/sys v0.0.0-20200513112337-417ce2331b5c
 	golang.org/x/time v0.0.0-20200416051211-89c76fbcd5d1 // indirect

@@ -184,6 +184,7 @@ func AddEndpointRules(nfti *NFTInterface, tableFamily nftables.TableFamily, chai
 				Mark: &nftableslib.MetaMark{
 					Set:   true,
 					Value: 0x4000,
+					Mask:  0x4000,
 				},
 			},
 		},
