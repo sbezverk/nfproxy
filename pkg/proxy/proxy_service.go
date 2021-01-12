@@ -43,7 +43,6 @@ func (p *proxy) AddService(svc *v1.Service) {
 		stickySeconds := int(*svc.Spec.SessionAffinityConfig.ClientIP.TimeoutSeconds)
 		klog.V(5).Infof("Service %s/%s has SessionAffinity set for %d seconds", svc.Namespace, svc.Name, stickySeconds)
 	}
-	//	svcName := types.NamespacedName{Namespace: svc.Namespace, Name: svc.Name}
 	if utilproxy.ShouldSkipService(svc) {
 		return
 	}
