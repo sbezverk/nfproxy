@@ -4,7 +4,7 @@ go 1.15
 
 require (
 	github.com/google/nftables v0.0.0-20200316075819-7127d9d22474
-	github.com/sbezverk/nftableslib v0.0.0-20200402150358-c20bed91f482
+	github.com/sbezverk/nftableslib v0.0.0-20210111145735-b08b2d804e1f 
 	golang.org/x/sys v0.0.0-20201112073958-5cba982894dd
 	k8s.io/api v0.20.1
 	k8s.io/apimachinery v0.20.1

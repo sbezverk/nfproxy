@@ -107,7 +107,7 @@ func (p *proxy) removeServicePortFromSets(servicePort ServicePort, tableFamily u
 	// Loadbalancer IP is taken from the last known services object stored in cache
 	for _, lbIP := range storedSvc.Status.LoadBalancer.Ingress {
 		klog.V(6).Infof("removing Service port %s from LoadBalancer Set, loadbalancer ip address: %s, protocol: %s port: %d ",
-			servicePort.String(), lbIP, proto, port)
+			servicePort.String(), lbIP.String(), proto, port)
 		if err := nftables.RemoveFromSet(p.nfti, tableFamily, proto, lbIP.IP, port, nftables.K8sLoadbalancerIPSet, nftables.K8sSvcPrefix+svcID); err != nil {
 			return err
 		}

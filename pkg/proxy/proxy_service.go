@@ -299,14 +299,14 @@ func (p *proxy) processServicePortChanges(svcNew *v1.Service, storedSvc *v1.Serv
 			// from Service Port completely, in this case operation of addition is skipped.
 			if svcNew.Spec.Ports[i].NodePort != 0 {
 				if err := nftables.AddToNodeportSet(p.nfti, tableFamily, servicePort.Protocol, uint16(svcNew.Spec.Ports[i].NodePort), nftables.K8sSvcPrefix+svcID); err != nil {
-					klog.Errorf("update/add of NodePort %d for Service Port name: %+v failed with error %w", svcNew.Spec.Ports[i].NodePort, svcPortName, err)
+					klog.Errorf("update/add of NodePort %d for Service Port name: %+v failed with error %+v", svcNew.Spec.Ports[i].NodePort, svcPortName, err)
 				}
 			}
 			// Removing old NodePort if it is not 0, NodePort of 0 in storedSvc.Spec.Ports[i].NodePort indicates the addition of NodePort
 			// to the Service Port which did not have NodePort before, in this case operation of removal is skipped.
 			if storedSvc.Spec.Ports[i].NodePort != 0 {
 				if err := nftables.RemoveFromNodeportSet(p.nfti, tableFamily, servicePort.Protocol, uint16(storedSvc.Spec.Ports[id].NodePort), nftables.K8sSvcPrefix+svcID); err != nil {
-					klog.Errorf("update/remove of NodePort %d for Service Port name: %+v failed with error %w", storedSvc.Spec.Ports[id].NodePort, svcPortName, err)
+					klog.Errorf("update/remove of NodePort %d for Service Port name: %+v failed with error %+v", storedSvc.Spec.Ports[id].NodePort, svcPortName, err)
 				}
 			}
 			klog.V(5).Infof("NodePort changed from %d to %d for Service Port name: %+v", storedSvc.Spec.Ports[id].NodePort, svcNew.Spec.Ports[i].NodePort, svcPortName)

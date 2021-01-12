@@ -503,6 +503,8 @@ github.com/satori/go.uuid v1.2.0/go.mod h1:dA0hQrYB0VpLJoorglMZABFdXlWrHn1NEOzdh
 github.com/sbezverk/nftableslib v0.0.0-20191009195911-d7d699cf636c/go.mod h1:AljQ9u3mGnCGUGz5yYo66Nu997KTqu46+OFl/fWGRFU=
 github.com/sbezverk/nftableslib v0.0.0-20200402150358-c20bed91f482 h1:k7gEZ/EwJhHDTRXFUZQlE4/p1cmoha7zL7PWCDG3ZHQ=
 github.com/sbezverk/nftableslib v0.0.0-20200402150358-c20bed91f482/go.mod h1:jmryJqKeeoqvuDl2M2NJ1FzPhdJYQflMsrL5qgEnNSg=
+github.com/sbezverk/nftableslib v0.0.0-20210111145735-b08b2d804e1f h1:Zi8wDJAUmUYqWX6A9ma84xOhFvwR7O10K7pvISM+SvM=
+github.com/sbezverk/nftableslib v0.0.0-20210111145735-b08b2d804e1f/go.mod h1:jmryJqKeeoqvuDl2M2NJ1FzPhdJYQflMsrL5qgEnNSg=
 github.com/sbezverk/nftableslib/e2e/setenv v0.0.0-20191009154549-4fe065fe4e96/go.mod h1:eg/8FSK3bdB2DJRB5Cs8oIXtqYtF/KbMRwyuaZ13SG4=
 github.com/sbezverk/nftableslib/e2e/setenv v0.0.0-20191010164456-029e0d78cdb1/go.mod h1:Q7cQRSoGvFdscKripABhD9LwzMPI7nyH/W19KStrNEE=
 github.com/sean-/seed v0.0.0-20170313163322-e2103e2c3529/go.mod h1:DxrIzT+xaE7yg65j358z/aeFdxmN0P9QXhEzd20vsDc=
