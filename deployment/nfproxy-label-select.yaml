@@ -1,0 +1,133 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: nfproxy
+  namespace: kube-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: nfproxy
+rules:
+  - apiGroups:
+      - ""
+    resources:
+      - endpoints
+      - services
+    verbs:
+      - list
+      - watch
+  - apiGroups:
+      - ""
+    resources:
+      - nodes
+    verbs:
+      - get
+  - apiGroups:
+      - ""
+    resources:
+      - events
+    verbs:
+      - create
+      - patch
+      - update
+  - apiGroups:
+      - events.k8s.io
+    resources:
+      - events
+    verbs:
+      - create
+  - apiGroups:
+      - events.k8s.io
+    resources:
+      - events
+    verbs:
+      - patch
+  - apiGroups:
+      - events.k8s.io
+    resources:
+      - events
+    verbs:
+      - update
+  - apiGroups:
+      - ""
+    resources:
+      - nodes
+    verbs:
+      - list
+  - apiGroups:
+      - ""
+    resources:
+      - nodes
+    verbs:
+      - watch
+  - apiGroups:
+      - discovery.k8s.io
+    resources:
+      - endpointslices
+    verbs:
+      - list
+  - apiGroups:
+      - discovery.k8s.io
+    resources:
+      - endpointslices
+    verbs:
+      - watch
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: nfproxy
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: nfproxy
+subjects:
+  - kind: ServiceAccount
+    name: nfproxy
+    namespace: kube-system
+---
+apiVersion: apps/v1
+kind: DaemonSet
+spec:
+  selector:
+    matchLabels:
+      app: nfproxy
+  template:
+    metadata:
+      labels:
+        app: nfproxy
+    spec:
+      serviceAccountName: nfproxy
+      hostNetwork: true
+      priorityClassName: system-node-critical
+      tolerations:
+        - key: CriticalAddonsOnly
+          operator: Exists
+        - operator: Exists
+      initContainers:
+        - name: filter-forward-policy
+          image: docker.io/sbezverk/nfproxy-iptables-fixup:0.0.0
+          securityContext:
+            privileged: true
+      containers:
+        - name: nfproxy
+          image: docker.io/sbezverk/nfproxy-debug:0.0.0
+          imagePullPolicy: Always
+          securityContext:
+            privileged: true
+          args:
+            - --ipv4clustercidr
+            - "57.48.0.0/12"
+            - --ipv6clustercidr
+            - ""
+            - --v
+            - "5"
+            - --service-proxy-name
+            - "nfproxy"
+          env:
+            - name: API_PUBLIC_ENDPOINT
+              value: "{API Server public endpoint in format http://ipaddress:port for insecure or https://ipaddress:port for  }"
+metadata:
+  name: nfproxy
+  namespace: kube-system
